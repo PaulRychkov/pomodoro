@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: pomodoro-postgres
+    restart: unless-stopped
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_USER: pomodoro
+      POSTGRES_PASSWORD: pomodoro
+      POSTGRES_DB: pomodoro
+    volumes:
+      - pomodoro-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pomodoro -d pomodoro"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pomodoro-pg-data:
