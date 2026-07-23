@@ -295,6 +295,8 @@ export namespace models {
 	    short_break_seconds: number;
 	    long_break_seconds: number;
 	    day_blocks: number[];
+	    study_before_work_minutes: number;
+	    study_after_work_minutes: number;
 	    auto_start_break: boolean;
 	    auto_start_focus: boolean;
 	    sound_enabled: boolean;
@@ -311,6 +313,8 @@ export namespace models {
 	        this.short_break_seconds = source["short_break_seconds"];
 	        this.long_break_seconds = source["long_break_seconds"];
 	        this.day_blocks = source["day_blocks"];
+	        this.study_before_work_minutes = source["study_before_work_minutes"];
+	        this.study_after_work_minutes = source["study_after_work_minutes"];
 	        this.auto_start_break = source["auto_start_break"];
 	        this.auto_start_focus = source["auto_start_focus"];
 	        this.sound_enabled = source["sound_enabled"];

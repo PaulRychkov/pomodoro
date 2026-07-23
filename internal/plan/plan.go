@@ -55,24 +55,31 @@ func (s *Service) Day(ctx context.Context, refresh bool) ([]SlotView, error) {
 	if err != nil {
 		return nil, err
 	}
-	total := 0
-	if preset != nil {
-		total = len(preset.Slots)
-	}
-	if total == 0 {
-		for _, b := range settings.DayBlocks {
-			total += b
-		}
-	}
 	existing, err := s.Store.Plans().ListDay(ctx, date)
 	if err != nil {
 		return nil, err
 	}
 	due, dueErr := s.Tasks.DueToday(ctx, time.Now().Local())
 	tasksOK := dueErr == nil
+	layout := computeDayLayout(settings, workTaskOf(due))
+	total := 0
+	if preset != nil {
+		total = len(preset.Slots)
+	}
+	if total == 0 && layout != nil {
+		total = layout.total
+	}
+	if total == 0 {
+		for _, b := range settings.DayBlocks {
+			total += b
+		}
+	}
+	if !tasksOK && len(existing) > 0 {
+		total = len(existing)
+	}
 	completed := s.Completed()
 	if refresh || len(existing) != total {
-		existing = buildSlots(date, total, preset, due, existing, settings, tasksOK, completed)
+		existing = buildSlots(date, total, preset, due, existing, settings, tasksOK, completed, layout)
 		if err := s.Store.Plans().ReplaceDay(ctx, date, existing); err != nil {
 			return nil, err
 		}
@@ -471,7 +478,101 @@ func minToSec(min *int) *int {
 	return &s
 }
 
-func buildSlots(date string, total int, preset *models.Preset, due []tasksclient.DueTask, existing []models.PlanSlot, settings models.Settings, tasksOK bool, frozen int) []models.PlanSlot {
+type layoutBlock struct {
+	start  int
+	end    int
+	inWork bool
+}
+
+type dayLayout struct {
+	total  int
+	blocks []layoutBlock
+}
+
+func workTaskOf(due []tasksclient.DueTask) *tasksclient.DueTask {
+	var work *tasksclient.DueTask
+	for i := range due {
+		d := &due[i]
+		if d.StartTimeMin == nil || d.DurationMin == nil || *d.DurationMin <= 0 {
+			continue
+		}
+		if work == nil || *d.DurationMin > *work.DurationMin {
+			work = d
+		}
+	}
+	return work
+}
+
+func computeDayLayout(settings models.Settings, work *tasksclient.DueTask) *dayLayout {
+	if work == nil {
+		return nil
+	}
+	focus := settings.FocusDurationSeconds / 60
+	if focus <= 0 {
+		focus = 25
+	}
+	short := settings.ShortBreakSeconds / 60
+	if short < 0 {
+		short = 0
+	}
+	long := settings.LongBreakSeconds / 60
+	if long <= 0 {
+		long = short
+	}
+	blockSize := 0
+	for _, b := range settings.DayBlocks {
+		if b > 0 {
+			blockSize = b
+			break
+		}
+	}
+	if blockSize <= 0 {
+		blockSize = 4
+	}
+	before := settings.StudyBeforeWorkMin
+	if before < 0 {
+		before = 0
+	}
+	after := settings.StudyAfterWorkMin
+	if after < 0 {
+		after = 0
+	}
+	segments := []struct {
+		length int
+		inWork bool
+	}{
+		{before, false},
+		{*work.DurationMin, true},
+		{after, false},
+	}
+	l := &dayLayout{}
+	idx := 0
+	for _, seg := range segments {
+		t := 0
+		n := 0
+		bStart := idx
+		for t+focus <= seg.length {
+			idx++
+			n++
+			t += focus
+			if n == blockSize {
+				l.blocks = append(l.blocks, layoutBlock{bStart, idx, seg.inWork})
+				bStart = idx
+				n = 0
+				t += long
+			} else {
+				t += short
+			}
+		}
+		if n > 0 {
+			l.blocks = append(l.blocks, layoutBlock{bStart, idx, seg.inWork})
+		}
+	}
+	l.total = idx
+	return l
+}
+
+func buildSlots(date string, total int, preset *models.Preset, due []tasksclient.DueTask, existing []models.PlanSlot, settings models.Settings, tasksOK bool, frozen int, layout *dayLayout) []models.PlanSlot {
 	defaultFocusMin := settings.FocusDurationSeconds / 60
 	if defaultFocusMin <= 0 {
 		defaultFocusMin = 25
@@ -509,13 +610,10 @@ func buildSlots(date string, total int, preset *models.Preset, due []tasksclient
 	}
 
 	var work *tasksclient.TaskOption
-	for i := range due {
-		if due[i].StartTimeMin != nil {
-			work = &due[i].Option
-			break
-		}
+	if wt := workTaskOf(due); wt != nil {
+		work = &wt.Option
 	}
-	workAt := planWorkPositions(total, settings.DayBlocks, pinned, work)
+	workAt := planWorkPositions(layout, pinned, work)
 
 	ordered := append([]tasksclient.DueTask(nil), due...)
 	sort.SliceStable(ordered, func(i, j int) bool {
@@ -576,32 +674,19 @@ func buildSlots(date string, total int, preset *models.Preset, due []tasksclient
 	return out
 }
 
-func planWorkPositions(total int, dayBlocks []int, pinned map[int]models.PlanSlot, work *tasksclient.TaskOption) map[int]bool {
+func planWorkPositions(layout *dayLayout, pinned map[int]models.PlanSlot, work *tasksclient.TaskOption) map[int]bool {
 	workAt := map[int]bool{}
-	if work == nil || total == 0 {
+	if work == nil || layout == nil {
 		return workAt
 	}
-	blocks := make([]int, 0, len(dayBlocks)+1)
-	used := 0
-	for _, b := range dayBlocks {
-		if b <= 0 || used >= total {
+	for _, b := range layout.blocks {
+		if !b.inWork {
 			continue
 		}
-		if used+b > total {
-			b = total - used
-		}
-		blocks = append(blocks, b)
-		used += b
-	}
-	if used < total {
-		blocks = append(blocks, total-used)
-	}
-	start := 0
-	for _, n := range blocks {
-		end := start + n
+		n := b.end - b.start
 		quota := n * 2 / 3
 		free := make([]int, 0, n)
-		for i := start; i < end; i++ {
+		for i := b.start; i < b.end; i++ {
 			if sl, ok := pinned[i]; ok {
 				if sl.TaskExternalID != nil && *sl.TaskExternalID == work.ExternalID {
 					quota--
@@ -615,7 +700,7 @@ func planWorkPositions(total int, dayBlocks []int, pinned map[int]models.PlanSlo
 			if workLeft <= 0 {
 				break
 			}
-			if pos == start {
+			if pos == b.start {
 				continue
 			}
 			otherLeft := len(free) - fi - workLeft
@@ -624,7 +709,6 @@ func planWorkPositions(total int, dayBlocks []int, pinned map[int]models.PlanSlo
 				workLeft--
 			}
 		}
-		start = end
 	}
 	return workAt
 }

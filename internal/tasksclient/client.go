@@ -52,6 +52,7 @@ type rawTask struct {
 	Progress         string  `json:"progress"`
 	IsActive         *bool   `json:"is_active"`
 	StartTimeMin     *int    `json:"start_time_minutes"`
+	DurationMin      *int    `json:"estimated_duration_minutes"`
 	EffortMinutes    *int    `json:"effort_minutes"`
 	Priority         int     `json:"priority"`
 	RequiresPomodoro *bool   `json:"requires_pomodoro"`
@@ -63,6 +64,7 @@ type DueTask struct {
 	EffortMin    *int
 	Priority     int
 	StartTimeMin *int
+	DurationMin  *int
 }
 
 func (c *Client) Topics(ctx context.Context) ([]Topic, error) {
@@ -237,6 +239,7 @@ func (c *Client) DueToday(ctx context.Context, now time.Time) ([]DueTask, error)
 			EffortMin:    t.EffortMinutes,
 			Priority:     t.Priority,
 			StartTimeMin: t.StartTimeMin,
+			DurationMin:  t.DurationMin,
 		})
 	}
 	return out, nil
