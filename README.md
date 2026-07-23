@@ -87,7 +87,19 @@ wails build
 | POMO_TASKS_SOURCE | tasks | значение `source` в привязке |
 | POMO_LOG_LEVEL | info | debug/info/warn/error |
 
-Пользовательские настройки таймера (длительности, блоки дня, автостарты, звук, оверлей) живут в таблице `settings` и редактируются в UI.
+Пользовательские настройки таймера (длительности, блоки дня, автостарты, звук, оверлей, раскладка плана дня) живут в таблице `settings` и редактируются в UI и через MCP.
+
+Дополнительно (мобильное и синхронизация): `POMO_DB_DRIVER` (`postgres`/`sqlite`), `POMO_DB_PATH` (файл SQLite), `POMO_SYNC_URL` / `POMO_SYNC_TOKEN` / `POMO_SYNC_INTERVAL_SECONDS` — двусторонняя синхронизация сессий, настроек, пресетов и расписания с ПК.
+
+## Мобильное приложение (Android)
+
+Тот же движок помидора, тот же план и тот же фронтенд (`frontend/`) под телефон, без дублирования.
+
+- `mobile/` — gomobile-пакет: движок + план + REST/RPC на **SQLite** (`ncruces/go-sqlite3`, без сисколлов — иначе seccomp Android убивает процесс) на `127.0.0.1:18082`, раздаёт собранный `frontend` как статику.
+- `android/` — Kotlin-обёртка (WebView + настройки: URL tasks, URL/токен синхронизации).
+- `frontend/src/api.ts` получил REST-адаптер: в Wails — через биндинги и события; в мобильном/браузере — через `/api/v1/rpc` и опрос состояния. Один и тот же React-код работает и на десктопе, и на телефоне.
+
+Сборка: `deploy\build-android.ps1` (фронт → `mobile/webdist` → `gomobile bind` → gradle APK).
 
 ## API (localhost:8082, префикс /api/v1)
 
