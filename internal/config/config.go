@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -17,6 +18,9 @@ type Config struct {
 	TasksBaseURL string
 	TasksSource  string
 	LogLevel     string
+	SyncToken    string
+	SyncURL      string
+	SyncInterval time.Duration
 }
 
 type Database struct {
@@ -26,6 +30,16 @@ type Database struct {
 	Password string
 	Name     string
 	SSLMode  string
+	Driver   string
+	Path     string
+}
+
+func (d Database) IsSQLite() bool {
+	return d.Driver == "sqlite"
+}
+
+func (d Database) SQLiteDSN() string {
+	return "file:" + strings.ReplaceAll(d.Path, "\\", "/") + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 }
 
 type Kafka struct {
@@ -65,6 +79,11 @@ func Load() (Config, error) {
 	v.SetDefault("db_password", "pomodoro")
 	v.SetDefault("db_name", "pomodoro")
 	v.SetDefault("db_sslmode", "disable")
+	v.SetDefault("db_driver", "postgres")
+	v.SetDefault("db_path", "pomodoro.db")
+	v.SetDefault("sync_token", "")
+	v.SetDefault("sync_url", "")
+	v.SetDefault("sync_interval_seconds", 60)
 	v.SetDefault("kafka_brokers", "localhost:9094")
 	v.SetDefault("kafka_topic", "pomodoro.events")
 	v.SetDefault("tasks_url", "http://localhost:8081")
@@ -80,11 +99,16 @@ func Load() (Config, error) {
 			Password: v.GetString("db_password"),
 			Name:     v.GetString("db_name"),
 			SSLMode:  v.GetString("db_sslmode"),
+			Driver:   v.GetString("db_driver"),
+			Path:     v.GetString("db_path"),
 		},
 		Kafka: Kafka{
 			Brokers: strings.Split(v.GetString("kafka_brokers"), ","),
 			Topic:   v.GetString("kafka_topic"),
 		},
+		SyncToken:    v.GetString("sync_token"),
+		SyncURL:      strings.TrimRight(v.GetString("sync_url"), "/"),
+		SyncInterval: time.Duration(v.GetInt("sync_interval_seconds")) * time.Second,
 		TasksBaseURL: strings.TrimRight(v.GetString("tasks_url"), "/"),
 		TasksSource:  v.GetString("tasks_source"),
 		LogLevel:     v.GetString("log_level"),

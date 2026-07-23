@@ -141,6 +141,7 @@ type Session struct {
 	TaskTitleSnapshot      *string    `json:"task_title_snapshot"`
 	RelabeledAt            *time.Time `json:"relabeled_at"`
 	CreatedAt              time.Time  `json:"created_at"`
+	UpdatedAt              time.Time  `json:"updated_at"`
 }
 
 func (Session) TableName() string { return "sessions" }
@@ -304,8 +305,25 @@ type Preset struct {
 func (Preset) TableName() string { return "presets" }
 
 type PresetAssignment struct {
-	Weekday  int       `gorm:"primaryKey" json:"weekday"`
-	PresetID uuid.UUID `gorm:"type:uuid;not null" json:"preset_id"`
+	Weekday   int       `gorm:"primaryKey" json:"weekday"`
+	PresetID  uuid.UUID `gorm:"type:uuid;not null" json:"preset_id"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func (PresetAssignment) TableName() string { return "preset_schedule" }
+
+type SyncTombstone struct {
+	ID        uint      `gorm:"primaryKey;autoIncrement" json:"-"`
+	Table     string    `gorm:"column:table_name;not null" json:"table"`
+	RowID     string    `gorm:"column:row_id;not null" json:"row_id"`
+	DeletedAt time.Time `gorm:"not null" json:"deleted_at"`
+}
+
+func (SyncTombstone) TableName() string { return "sync_tombstones" }
+
+type SyncState struct {
+	Key   string `gorm:"primaryKey"`
+	Value string `gorm:"not null"`
+}
+
+func (SyncState) TableName() string { return "sync_state" }

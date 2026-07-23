@@ -48,7 +48,23 @@ function app(): GoApp {
   return window.go.main.App;
 }
 
-export const api = {
+export const isDesktop = Boolean(window.go);
+
+async function rpc<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<T> {
+  const res = await fetch("/api/v1/rpc" + path, {
+    method,
+    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : undefined;
+  if (!res.ok) {
+    throw new Error(data?.error?.message ?? data?.error ?? res.statusText);
+  }
+  return data as T;
+}
+
+const wailsApi = {
   getState: () => app().GetState(),
   startFocus: (b: Binding) => app().StartFocus(b),
   startBreak: () => app().StartBreak(),
@@ -78,11 +94,69 @@ export const api = {
   quit: () => app().Quit(),
 };
 
+const restApi: typeof wailsApi = {
+  getState: () => rpc<State>("GET", "/state"),
+  startFocus: (b: Binding) => rpc<State>("POST", "/start-focus", b),
+  startBreak: () => rpc<State>("POST", "/start-break", {}),
+  startNext: (b: Binding) => rpc<State>("POST", "/start-next", b),
+  pause: () => rpc<State>("POST", "/pause", {}),
+  resume: () => rpc<State>("POST", "/resume", {}),
+  stop: (outcome: string) => rpc<State>("POST", "/stop", { outcome }),
+  relabel: (id: string, b: Binding) => rpc<Session>("POST", "/relabel", { id, label: b.label, task: b.task }),
+  listTodaySessions: () => rpc<Session[]>("GET", "/sessions-today"),
+  searchTasks: (query: string) => rpc<TaskOption[]>("GET", "/search-tasks?q=" + encodeURIComponent(query)),
+  getDayPlan: () => rpc<PlanSlot[]>("GET", "/day-plan"),
+  refreshDayPlan: () => rpc<PlanSlot[]>("POST", "/refresh-day-plan", {}),
+  setPlanSlot: (idx: number, p: SlotPatch) => rpc<PlanSlot[]>("POST", "/set-plan-slot", { idx, ...p }),
+  listPlanCandidates: () => rpc<TaskOption[]>("GET", "/plan-candidates"),
+  getPickerTree: () => rpc<PickerNode[]>("GET", "/picker-tree"),
+  listPresets: () => rpc<Preset[]>("GET", "/presets"),
+  savePreset: (name: string) => rpc<Preset[]>("POST", "/presets", { name }),
+  deletePreset: (name: string) => rpc<Preset[]>("DELETE", "/presets/" + encodeURIComponent(name)),
+  getPresetSchedule: () => rpc<ScheduleEntry[]>("GET", "/preset-schedule"),
+  assignPreset: (weekday: number, presetName: string) =>
+    rpc<ScheduleEntry[]>("PUT", "/preset-schedule", { weekday, preset_name: presetName }),
+  getSettings: async () => {
+    const res = await fetch("/api/v1/settings");
+    return (await res.json()) as Settings;
+  },
+  saveSettings: async (s: Settings) => {
+    const res = await fetch("/api/v1/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(s),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message ?? res.statusText);
+    return data as Settings;
+  },
+  chooseSoundFile: async () => "",
+  enterOverlay: async () => undefined,
+  exitOverlay: async () => undefined,
+  minimise: async () => undefined,
+  quit: async () => undefined,
+};
+
+export const api = isDesktop ? wailsApi : restApi;
+
 export function onStatePush(cb: (push: StatePush) => void): () => void {
-  if (!window.runtime) {
-    return () => undefined;
+  if (window.runtime) {
+    return window.runtime.EventsOn("pomodoro:state", (data) => cb(data as StatePush));
   }
-  return window.runtime.EventsOn("pomodoro:state", (data) => cb(data as StatePush));
+  let prev = "";
+  const timer = window.setInterval(async () => {
+    try {
+      const st = await restApi.getState();
+      const key = JSON.stringify(st);
+      if (key !== prev) {
+        prev = key;
+        cb({ state: st, reason: "poll" } as StatePush);
+      }
+    } catch {
+      /* сервер ещё поднимается */
+    }
+  }, 1000);
+  return () => window.clearInterval(timer);
 }
 
 export function onModeChange(cb: (mode: "main" | "overlay") => void): () => void {

@@ -2,7 +2,9 @@ package handler
 
 import (
 	"errors"
+	"io/fs"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -13,6 +15,7 @@ import (
 	"github.com/PaulRychkov/pomodoro/internal/models"
 	"github.com/PaulRychkov/pomodoro/internal/plan"
 	"github.com/PaulRychkov/pomodoro/internal/store"
+	"github.com/PaulRychkov/pomodoro/internal/syncer"
 )
 
 type Handler struct {
@@ -21,11 +24,26 @@ type Handler struct {
 	plan   *plan.Service
 	log    *zap.Logger
 	mcp    http.Handler
+
+	sync      *syncer.Service
+	syncToken string
+	static    fs.FS
 }
 
 func New(e *engine.Engine, st store.Store, pl *plan.Service, log *zap.Logger) *Handler {
 	h := &Handler{engine: e, store: st, plan: pl, log: log}
 	h.mcp = h.newMCPHandler()
+	return h
+}
+
+func (h *Handler) WithSync(svc *syncer.Service, token string) *Handler {
+	h.sync = svc
+	h.syncToken = token
+	return h
+}
+
+func (h *Handler) WithStatic(static fs.FS) *Handler {
+	h.static = static
 	return h
 }
 
@@ -49,6 +67,27 @@ func (h *Handler) Router() *gin.Engine {
 	api.GET("/settings", h.getSettings)
 	api.PUT("/settings", h.putSettings)
 	api.GET("/plan", h.getDayPlan)
+	h.rpcRoutes(api)
+
+	if h.sync != nil {
+		sg := api.Group("/sync", h.syncAuth())
+		sg.GET("/changes", h.syncChanges)
+		sg.POST("/changes", h.syncApply)
+	}
+
+	if h.static != nil {
+		fileServer := http.FileServer(http.FS(h.static))
+		r.NoRoute(func(c *gin.Context) {
+			p := strings.TrimPrefix(c.Request.URL.Path, "/")
+			if p == "" {
+				p = "index.html"
+			}
+			if _, err := fs.Stat(h.static, p); err != nil {
+				c.Request.URL.Path = "/"
+			}
+			fileServer.ServeHTTP(c.Writer, c.Request)
+		})
+	}
 
 	return r
 }

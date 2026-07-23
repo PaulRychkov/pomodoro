@@ -1,0 +1,6 @@
+DROP TABLE IF EXISTS preset_schedule;
+DROP TABLE IF EXISTS presets;
+DROP TABLE IF EXISTS plan_slots;
+DROP TABLE IF EXISTS events_outbox;
+DROP TABLE IF EXISTS settings;
+DROP TABLE IF EXISTS sessions;

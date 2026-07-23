@@ -7,18 +7,25 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ncruces/go-sqlite3/gormlite"
+	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 
 	"github.com/PaulRychkov/pomodoro/internal/config"
 	"github.com/PaulRychkov/pomodoro/internal/engine"
 	"github.com/PaulRychkov/pomodoro/internal/handler"
 	"github.com/PaulRychkov/pomodoro/internal/migrate"
+	migrationssqlite "github.com/PaulRychkov/pomodoro/internal/migrate/migrations_sqlite"
 	"github.com/PaulRychkov/pomodoro/internal/models"
 	"github.com/PaulRychkov/pomodoro/internal/plan"
 	"github.com/PaulRychkov/pomodoro/internal/relay"
+	"github.com/PaulRychkov/pomodoro/internal/sqlitemigrate"
 	"github.com/PaulRychkov/pomodoro/internal/store"
+	"github.com/PaulRychkov/pomodoro/internal/syncer"
 	"github.com/PaulRychkov/pomodoro/internal/tasksclient"
 )
 
@@ -75,11 +82,32 @@ func (a *App) startup(ctx context.Context) {
 	})
 }
 
-func (a *App) initBackend() error {
-	if err := migrate.Up(a.cfg.Database.URL()); err != nil {
-		return err
+func openStore(dbCfg config.Database) (store.Store, error) {
+	if dbCfg.IsSQLite() {
+		db, err := gorm.Open(gormlite.Open(dbCfg.SQLiteDSN()), &gorm.Config{
+			Logger:  gormlogger.Default.LogMode(gormlogger.Silent),
+			NowFunc: func() time.Time { return time.Now().UTC() },
+		})
+		if err != nil {
+			return nil, fmt.Errorf("open sqlite: %w", err)
+		}
+		sqlDB, err := db.DB()
+		if err != nil {
+			return nil, fmt.Errorf("unwrap sqlite: %w", err)
+		}
+		if err := sqlitemigrate.Up(sqlDB, migrationssqlite.FS); err != nil {
+			return nil, fmt.Errorf("sqlite migrations: %w", err)
+		}
+		return store.NewWithDB(db), nil
 	}
-	st, err := store.Open(a.cfg.Database.DSN())
+	if err := migrate.Up(dbCfg.URL()); err != nil {
+		return nil, err
+	}
+	return store.Open(dbCfg.DSN())
+}
+
+func (a *App) initBackend() error {
+	st, err := openStore(a.cfg.Database)
 	if err != nil {
 		return err
 	}
@@ -92,10 +120,12 @@ func (a *App) initBackend() error {
 	}
 	go eng.Run(backendCtx)
 
-	rel := relay.New(st, a.cfg.Kafka.Topic, func() (relay.Publisher, error) {
-		return relay.NewSaramaPublisher(a.cfg.Kafka.Brokers)
-	}, a.log)
-	go rel.Run(backendCtx)
+	if len(a.cfg.Kafka.Brokers) > 0 && a.cfg.Kafka.Brokers[0] != "" {
+		rel := relay.New(st, a.cfg.Kafka.Topic, func() (relay.Publisher, error) {
+			return relay.NewSaramaPublisher(a.cfg.Kafka.Brokers)
+		}, a.log)
+		go rel.Run(backendCtx)
+	}
 
 	a.engine = eng
 	a.store = st
@@ -109,6 +139,13 @@ func (a *App) initBackend() error {
 	eng.SetDurationProvider(a.plan.SlotDurations)
 
 	h := handler.New(eng, st, a.plan, a.log)
+	if db := store.DBOf(st); db != nil {
+		syncSvc := &syncer.Service{DB: db, Log: a.log}
+		h.WithSync(syncSvc, a.cfg.SyncToken)
+		if a.cfg.SyncURL != "" {
+			go syncer.NewClient(syncSvc, a.cfg.SyncURL, a.cfg.SyncToken, a.cfg.SyncInterval, a.log).Run(backendCtx)
+		}
+	}
 	srv := &http.Server{Addr: fmt.Sprintf(":%d", a.cfg.HTTPPort), Handler: h.Router()}
 	go func() {
 		a.log.Info("api listening", zap.Int("port", a.cfg.HTTPPort))

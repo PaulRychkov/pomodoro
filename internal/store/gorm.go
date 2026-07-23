@@ -33,6 +33,13 @@ func NewWithDB(db *gorm.DB) Store {
 	return &gormStore{db: db}
 }
 
+func DBOf(s Store) *gorm.DB {
+	if g, ok := s.(*gormStore); ok {
+		return g.db
+	}
+	return nil
+}
+
 func (s *gormStore) Sessions() SessionRepo  { return &sessionRepo{db: s.db} }
 func (s *gormStore) Settings() SettingsRepo { return &settingsRepo{db: s.db} }
 func (s *gormStore) Outbox() OutboxRepo     { return &outboxRepo{db: s.db} }
@@ -228,6 +235,9 @@ func (r *presetRepo) Delete(ctx context.Context, id uuid.UUID) error {
 	if err := r.db.WithContext(ctx).Delete(&models.Preset{}, "id = ?", id).Error; err != nil {
 		return fmt.Errorf("delete preset: %w", err)
 	}
+	if err := r.db.WithContext(ctx).Create(&models.SyncTombstone{Table: "presets", RowID: id.String(), DeletedAt: time.Now().UTC()}).Error; err != nil {
+		return fmt.Errorf("record preset tombstone: %w", err)
+	}
 	return nil
 }
 
@@ -243,6 +253,9 @@ func (r *presetRepo) Assign(ctx context.Context, weekday int, presetID *uuid.UUI
 	if presetID == nil {
 		if err := r.db.WithContext(ctx).Delete(&models.PresetAssignment{}, "weekday = ?", weekday).Error; err != nil {
 			return fmt.Errorf("clear preset assignment: %w", err)
+		}
+		if err := r.db.WithContext(ctx).Create(&models.SyncTombstone{Table: "preset_schedule", RowID: fmt.Sprint(weekday), DeletedAt: time.Now().UTC()}).Error; err != nil {
+			return fmt.Errorf("record schedule tombstone: %w", err)
 		}
 		return nil
 	}

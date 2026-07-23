@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Pomodoro</string>
+    <string name="menu_sync">Настройки</string>
+    <string name="tasks_url_hint">URL tasks (пусто = локальный)</string>
+    <string name="sync_url_hint">URL сервера pomodoro на ПК</string>
+    <string name="sync_token_hint">Токен (если задан)</string>
+    <string name="sync_save">Сохранить</string>
+    <string name="sync_cancel">Отмена</string>
+</resources>
