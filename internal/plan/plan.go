@@ -70,13 +70,13 @@ func (s *Service) Day(ctx context.Context, refresh bool) ([]SlotView, error) {
 	}
 	due, dueErr := s.Tasks.DueToday(ctx, time.Now().Local())
 	tasksOK := dueErr == nil
+	completed := s.Completed()
 	if refresh || len(existing) != total {
-		existing = buildSlots(date, total, preset, due, existing, settings, tasksOK)
+		existing = buildSlots(date, total, preset, due, existing, settings, tasksOK, completed)
 		if err := s.Store.Plans().ReplaceDay(ctx, date, existing); err != nil {
 			return nil, err
 		}
 	}
-	completed := s.Completed()
 	views := make([]SlotView, 0, total)
 	for _, sl := range existing {
 		views = append(views, SlotView{
@@ -132,7 +132,7 @@ func (s *Service) SetSlot(ctx context.Context, idx int, upd SlotUpdate) ([]SlotV
 	if err := s.Store.Plans().Upsert(ctx, &sl); err != nil {
 		return nil, err
 	}
-	return s.Day(ctx, !sl.Pinned)
+	return s.Day(ctx, true)
 }
 
 func (s *Service) SlotDurations(idx int) (focusSeconds, breakSeconds *int) {
@@ -471,7 +471,7 @@ func minToSec(min *int) *int {
 	return &s
 }
 
-func buildSlots(date string, total int, preset *models.Preset, due []tasksclient.DueTask, existing []models.PlanSlot, settings models.Settings, tasksOK bool) []models.PlanSlot {
+func buildSlots(date string, total int, preset *models.Preset, due []tasksclient.DueTask, existing []models.PlanSlot, settings models.Settings, tasksOK bool, frozen int) []models.PlanSlot {
 	defaultFocusMin := settings.FocusDurationSeconds / 60
 	if defaultFocusMin <= 0 {
 		defaultFocusMin = 25
@@ -492,10 +492,14 @@ func buildSlots(date string, total int, preset *models.Preset, due []tasksclient
 	pinned := map[int]models.PlanSlot{}
 	pinnedMinutes := map[string]int{}
 	for _, sl := range existing {
-		if !sl.Pinned || sl.Idx >= total {
+		if sl.Idx >= total {
 			continue
 		}
-		if tasksOK && sl.TaskExternalID != nil && !valid[*sl.TaskExternalID] {
+		fixed := sl.Idx < frozen
+		if !fixed && !sl.Pinned {
+			continue
+		}
+		if !fixed && tasksOK && sl.TaskExternalID != nil && !valid[*sl.TaskExternalID] {
 			continue
 		}
 		pinned[sl.Idx] = sl
@@ -503,6 +507,16 @@ func buildSlots(date string, total int, preset *models.Preset, due []tasksclient
 			pinnedMinutes[*sl.TaskExternalID] += slotFocusMin(sl, sl.Idx)
 		}
 	}
+
+	var work *tasksclient.TaskOption
+	for i := range due {
+		if due[i].StartTimeMin != nil {
+			work = &due[i].Option
+			break
+		}
+	}
+	workAt := planWorkPositions(total, settings.DayBlocks, pinned, work)
+
 	ordered := append([]tasksclient.DueTask(nil), due...)
 	sort.SliceStable(ordered, func(i, j int) bool {
 		pi, pj := ordered[i].Priority, ordered[j].Priority
@@ -520,6 +534,9 @@ func buildSlots(date string, total int, preset *models.Preset, due []tasksclient
 	}
 	var needs []need
 	for _, d := range ordered {
+		if work != nil && d.Option.ExternalID == work.ExternalID {
+			continue
+		}
 		remaining := defaultFocusMin
 		if d.EffortMin != nil && *d.EffortMin > 0 {
 			remaining = *d.EffortMin
@@ -541,6 +558,11 @@ func buildSlots(date string, total int, preset *models.Preset, due []tasksclient
 			sl.FocusSeconds = minToSec(&preset.Slots[i].FocusMinutes)
 			sl.BreakSeconds = minToSec(&preset.Slots[i].BreakMinutes)
 		}
+		if workAt[i] && work != nil {
+			sl.SetTask(&models.TaskRef{Source: work.Source, ExternalID: work.ExternalID, TitleSnapshot: work.Title})
+			out = append(out, sl)
+			continue
+		}
 		for ni < len(needs) && needs[ni].remaining <= 0 {
 			ni++
 		}
@@ -552,4 +574,57 @@ func buildSlots(date string, total int, preset *models.Preset, due []tasksclient
 		out = append(out, sl)
 	}
 	return out
+}
+
+func planWorkPositions(total int, dayBlocks []int, pinned map[int]models.PlanSlot, work *tasksclient.TaskOption) map[int]bool {
+	workAt := map[int]bool{}
+	if work == nil || total == 0 {
+		return workAt
+	}
+	blocks := make([]int, 0, len(dayBlocks)+1)
+	used := 0
+	for _, b := range dayBlocks {
+		if b <= 0 || used >= total {
+			continue
+		}
+		if used+b > total {
+			b = total - used
+		}
+		blocks = append(blocks, b)
+		used += b
+	}
+	if used < total {
+		blocks = append(blocks, total-used)
+	}
+	start := 0
+	for _, n := range blocks {
+		end := start + n
+		quota := n * 2 / 3
+		free := make([]int, 0, n)
+		for i := start; i < end; i++ {
+			if sl, ok := pinned[i]; ok {
+				if sl.TaskExternalID != nil && *sl.TaskExternalID == work.ExternalID {
+					quota--
+				}
+				continue
+			}
+			free = append(free, i)
+		}
+		workLeft := quota
+		for fi, pos := range free {
+			if workLeft <= 0 {
+				break
+			}
+			if pos == start {
+				continue
+			}
+			otherLeft := len(free) - fi - workLeft
+			if workLeft > otherLeft {
+				workAt[pos] = true
+				workLeft--
+			}
+		}
+		start = end
+	}
+	return workAt
 }

@@ -58,10 +58,11 @@ type rawTask struct {
 }
 
 type DueTask struct {
-	Option    TaskOption
-	TopicID   *string
-	EffortMin *int
-	Priority  int
+	Option       TaskOption
+	TopicID      *string
+	EffortMin    *int
+	Priority     int
+	StartTimeMin *int
 }
 
 func (c *Client) Topics(ctx context.Context) ([]Topic, error) {
@@ -226,15 +227,16 @@ func (c *Client) DueToday(ctx context.Context, now time.Time) ([]DueTask, error)
 		if t.RequiresPomodoro != nil && !*t.RequiresPomodoro {
 			continue
 		}
-		if t.StartTimeMin != nil {
+		if t.StartTimeMin != nil && (t.RequiresPomodoro == nil || !*t.RequiresPomodoro) {
 			continue
 		}
 		seen[t.ID] = true
 		out = append(out, DueTask{
-			Option:    TaskOption{Source: c.source, ExternalID: t.ID, Title: t.Title},
-			TopicID:   t.TopicID,
-			EffortMin: t.EffortMinutes,
-			Priority:  t.Priority,
+			Option:       TaskOption{Source: c.source, ExternalID: t.ID, Title: t.Title},
+			TopicID:      t.TopicID,
+			EffortMin:    t.EffortMinutes,
+			Priority:     t.Priority,
+			StartTimeMin: t.StartTimeMin,
 		})
 	}
 	return out, nil

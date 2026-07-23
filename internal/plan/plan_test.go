@@ -39,7 +39,7 @@ func TestBuildSlotsAllocatesByEffort(t *testing.T) {
 		dueTask("b", "B", 50),
 		dueTask("c", "C", 25),
 	}
-	slots := buildSlots("2026-07-16", 8, nil, due, nil, settingsWith(4, 4), true)
+	slots := buildSlots("2026-07-16", 8, nil, due, nil, settingsWith(4, 4), true, 0)
 	got := taskIDs(slots)
 	want := []string{"a", "a", "a", "b", "b", "c", "", ""}
 	for i := range want {
@@ -56,7 +56,7 @@ func TestBuildSlotsUsesPresetDurationsForAllocation(t *testing.T) {
 		{FocusMinutes: 50, BreakMinutes: 10},
 	}}
 	due := []tasksclient.DueTask{dueTask("a", "A", 100)}
-	slots := buildSlots("2026-07-16", 3, preset, due, nil, settingsWith(3), true)
+	slots := buildSlots("2026-07-16", 3, preset, due, nil, settingsWith(3), true, 0)
 	got := taskIDs(slots)
 	want := []string{"a", "a", ""}
 	for i := range want {
@@ -77,7 +77,7 @@ func TestBuildSlotsKeepsPinnedWhenTasksUnavailable(t *testing.T) {
 	existing := []models.PlanSlot{
 		{Date: "2026-07-16", Idx: 0, TaskExternalID: &ext, TaskSource: &ext, TaskTitle: &ext, Pinned: true},
 	}
-	slots := buildSlots("2026-07-16", 3, nil, nil, existing, settingsWith(3), false)
+	slots := buildSlots("2026-07-16", 3, nil, nil, existing, settingsWith(3), false, 0)
 	if slots[0].TaskExternalID == nil || *slots[0].TaskExternalID != "a" {
 		t.Fatalf("pinned slot lost while tasks API unavailable: %+v", slots[0])
 	}
@@ -88,9 +88,93 @@ func TestBuildSlotsDropsPinnedForCompletedTask(t *testing.T) {
 	existing := []models.PlanSlot{
 		{Date: "2026-07-16", Idx: 0, TaskExternalID: &ext, TaskSource: &ext, TaskTitle: &ext, Pinned: true},
 	}
-	slots := buildSlots("2026-07-16", 2, nil, []tasksclient.DueTask{dueTask("b", "B", 25)}, existing, settingsWith(2), true)
+	slots := buildSlots("2026-07-16", 2, nil, []tasksclient.DueTask{dueTask("b", "B", 25)}, existing, settingsWith(2), true, 0)
 	if slots[0].TaskExternalID != nil && *slots[0].TaskExternalID == "done-task" {
 		t.Fatalf("pinned slot with completed task must be released: %+v", slots[0])
+	}
+}
+
+func workTask(id, title string, startMin int) tasksclient.DueTask {
+	d := dueTask(id, title, 0)
+	d.StartTimeMin = &startMin
+	return d
+}
+
+func TestBuildSlotsWorkQuotaBlocksOf3(t *testing.T) {
+	due := []tasksclient.DueTask{
+		workTask("w", "Работа", 540),
+		dueTask("a", "A", 100),
+	}
+	slots := buildSlots("2026-07-16", 6, nil, due, nil, settingsWith(3, 3), true, 0)
+	got := taskIDs(slots)
+	want := []string{"a", "w", "w", "a", "w", "w"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("slot %d: got %q want %q (all: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestBuildSlotsWorkQuotaBlocksOf4(t *testing.T) {
+	due := []tasksclient.DueTask{
+		workTask("w", "Работа", 540),
+		dueTask("a", "A", 200),
+	}
+	slots := buildSlots("2026-07-16", 8, nil, due, nil, settingsWith(4, 4), true, 0)
+	got := taskIDs(slots)
+	want := []string{"a", "w", "a", "w", "a", "w", "a", "w"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("slot %d: got %q want %q (all: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestBuildSlotsNoWorkWithoutWorkTask(t *testing.T) {
+	due := []tasksclient.DueTask{dueTask("a", "A", 200)}
+	slots := buildSlots("2026-07-16", 6, nil, due, nil, settingsWith(3, 3), true, 0)
+	for i, sl := range slots {
+		if sl.TaskExternalID == nil || *sl.TaskExternalID != "a" {
+			t.Fatalf("slot %d must go to study task without work: %v", i, taskIDs(slots))
+		}
+	}
+}
+
+func TestBuildSlotsPinnedWorkCountsTowardQuota(t *testing.T) {
+	w := "w"
+	src := "tasks"
+	existing := []models.PlanSlot{
+		{Date: "2026-07-16", Idx: 2, TaskExternalID: &w, TaskSource: &src, TaskTitle: &w, Pinned: true},
+	}
+	due := []tasksclient.DueTask{
+		workTask("w", "Работа", 540),
+		dueTask("a", "A", 100),
+	}
+	slots := buildSlots("2026-07-16", 3, nil, due, existing, settingsWith(3), true, 0)
+	got := taskIDs(slots)
+	want := []string{"a", "w", "w"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("slot %d: got %q want %q (all: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestBuildSlotsFrozenDoneSlotsSurvive(t *testing.T) {
+	old := "gone-task"
+	src := "tasks"
+	existing := []models.PlanSlot{
+		{Date: "2026-07-16", Idx: 0, TaskExternalID: &old, TaskSource: &src, TaskTitle: &old},
+		{Date: "2026-07-16", Idx: 1},
+		{Date: "2026-07-16", Idx: 2},
+	}
+	due := []tasksclient.DueTask{dueTask("a", "A", 100)}
+	slots := buildSlots("2026-07-16", 3, nil, due, existing, settingsWith(3), true, 1)
+	if slots[0].TaskExternalID == nil || *slots[0].TaskExternalID != "gone-task" {
+		t.Fatalf("done slot must stay frozen: %+v", slots[0])
+	}
+	if slots[1].TaskExternalID == nil || *slots[1].TaskExternalID != "a" {
+		t.Fatalf("tail must be redistributed: %v", taskIDs(slots))
 	}
 }
 
@@ -100,7 +184,7 @@ func TestBuildSlotsSubtractsPinnedEffort(t *testing.T) {
 		{Date: "2026-07-16", Idx: 2, TaskExternalID: &ext, TaskSource: &ext, TaskTitle: &ext, Pinned: true},
 	}
 	due := []tasksclient.DueTask{dueTask("a", "A", 50)}
-	slots := buildSlots("2026-07-16", 4, nil, due, existing, settingsWith(4), true)
+	slots := buildSlots("2026-07-16", 4, nil, due, existing, settingsWith(4), true, 0)
 	got := taskIDs(slots)
 	want := []string{"a", "", "a", ""}
 	for i := range want {
