@@ -61,7 +61,7 @@ func (s *Service) Day(ctx context.Context, refresh bool) ([]SlotView, error) {
 	}
 	due, dueErr := s.Tasks.DueToday(ctx, time.Now().Local())
 	tasksOK := dueErr == nil
-	layout := computeDayLayout(settings, workWindowsOf(due))
+	layout := computeDayLayout(settings, timeWindowsOf(due))
 	total := 0
 	if preset != nil {
 		total = len(preset.Slots)
@@ -479,9 +479,9 @@ func minToSec(min *int) *int {
 }
 
 type layoutBlock struct {
-	start  int
-	end    int
-	workID string
+	start    int
+	end      int
+	windowID string
 }
 
 type dayLayout struct {
@@ -489,7 +489,7 @@ type dayLayout struct {
 	blocks []layoutBlock
 }
 
-func workWindowsOf(due []tasksclient.DueTask) []tasksclient.DueTask {
+func timeWindowsOf(due []tasksclient.DueTask) []tasksclient.DueTask {
 	var wins []tasksclient.DueTask
 	for _, d := range due {
 		if d.StartTimeMin == nil || d.DurationMin == nil || *d.DurationMin <= 0 {
@@ -544,17 +544,17 @@ func computeDayLayout(settings models.Settings, wins []tasksclient.DueTask) *day
 	if blockSize <= 0 {
 		blockSize = 4
 	}
-	before := settings.StudyBeforeWorkMin
+	before := settings.PlanBeforeWindowMin
 	if before < 0 {
 		before = 0
 	}
-	after := settings.StudyAfterWorkMin
+	after := settings.PlanAfterWindowMin
 	if after < 0 {
 		after = 0
 	}
 	type segment struct {
-		length int
-		workID string
+		length   int
+		windowID string
 	}
 	var segments []segment
 	segments = append(segments, segment{before, ""})
@@ -579,7 +579,7 @@ func computeDayLayout(settings models.Settings, wins []tasksclient.DueTask) *day
 			n++
 			t += focus
 			if n == blockSize {
-				l.blocks = append(l.blocks, layoutBlock{bStart, idx, seg.workID})
+				l.blocks = append(l.blocks, layoutBlock{bStart, idx, seg.windowID})
 				bStart = idx
 				n = 0
 				t += long
@@ -588,7 +588,7 @@ func computeDayLayout(settings models.Settings, wins []tasksclient.DueTask) *day
 			}
 		}
 		if n > 0 {
-			l.blocks = append(l.blocks, layoutBlock{bStart, idx, seg.workID})
+			l.blocks = append(l.blocks, layoutBlock{bStart, idx, seg.windowID})
 		}
 	}
 	l.total = idx
@@ -632,12 +632,12 @@ func buildSlots(date string, total int, preset *models.Preset, due []tasksclient
 		}
 	}
 
-	wins := workWindowsOf(due)
-	workByID := map[string]tasksclient.TaskOption{}
+	wins := timeWindowsOf(due)
+	windowByID := map[string]tasksclient.TaskOption{}
 	for _, w := range wins {
-		workByID[w.Option.ExternalID] = w.Option
+		windowByID[w.Option.ExternalID] = w.Option
 	}
-	workAt := planWorkPositions(layout, pinned, workByID, settings.WorkSharePercent)
+	windowAt := planWindowPositions(layout, pinned, windowByID, settings.WindowSharePercent)
 
 	ordered := append([]tasksclient.DueTask(nil), due...)
 	sort.SliceStable(ordered, func(i, j int) bool {
@@ -650,9 +650,9 @@ func buildSlots(date string, total int, preset *models.Preset, due []tasksclient
 		}
 		return pi < pj
 	})
-	var needs []studyNeed
+	var needs []flexNeed
 	for _, d := range ordered {
-		if _, isWin := workByID[d.Option.ExternalID]; isWin {
+		if _, isWin := windowByID[d.Option.ExternalID]; isWin {
 			continue
 		}
 		remaining := defaultFocusMin
@@ -661,20 +661,20 @@ func buildSlots(date string, total int, preset *models.Preset, due []tasksclient
 		}
 		remaining -= pinnedMinutes[d.Option.ExternalID]
 		if remaining > 0 {
-			needs = append(needs, studyNeed{task: d.Option, remaining: remaining, slots: -1})
+			needs = append(needs, flexNeed{task: d.Option, remaining: remaining, slots: -1})
 		}
 	}
 
-	freeStudy := 0
+	freeFlex := 0
 	capacityMin := 0
 	for i := 0; i < total; i++ {
 		if _, ok := pinned[i]; ok {
 			continue
 		}
-		if workAt[i] != "" {
+		if windowAt[i] != "" {
 			continue
 		}
-		freeStudy++
+		freeFlex++
 		capacityMin += slotFocusMin(models.PlanSlot{Date: date, Idx: i}, i)
 	}
 	sumNeed := 0
@@ -683,12 +683,12 @@ func buildSlots(date string, total int, preset *models.Preset, due []tasksclient
 	}
 	scaled := sumNeed > capacityMin
 	if scaled {
-		quotas := scaleStudyQuotas(freeStudy, needs)
+		quotas := scaleFlexQuotas(freeFlex, needs)
 		for i := range needs {
 			needs[i].slots = quotas[i]
 		}
 	}
-	needDone := func(n studyNeed) bool {
+	needDone := func(n flexNeed) bool {
 		if scaled {
 			return n.slots <= 0
 		}
@@ -707,8 +707,8 @@ func buildSlots(date string, total int, preset *models.Preset, due []tasksclient
 			sl.FocusSeconds = minToSec(&preset.Slots[i].FocusMinutes)
 			sl.BreakSeconds = minToSec(&preset.Slots[i].BreakMinutes)
 		}
-		if id := workAt[i]; id != "" {
-			t := workByID[id]
+		if id := windowAt[i]; id != "" {
+			t := windowByID[id]
 			sl.SetTask(&models.TaskRef{Source: t.Source, ExternalID: t.ExternalID, TitleSnapshot: t.Title})
 			out = append(out, sl)
 			continue
@@ -730,13 +730,13 @@ func buildSlots(date string, total int, preset *models.Preset, due []tasksclient
 	return out
 }
 
-type studyNeed struct {
+type flexNeed struct {
 	task      tasksclient.TaskOption
 	remaining int
 	slots     int
 }
 
-func scaleStudyQuotas(free int, needs []studyNeed) []int {
+func scaleFlexQuotas(free int, needs []flexNeed) []int {
 	quotas := make([]int, len(needs))
 	if free <= 0 || len(needs) == 0 {
 		return quotas
@@ -796,19 +796,19 @@ func scaleStudyQuotas(free int, needs []studyNeed) []int {
 	return quotas
 }
 
-func planWorkPositions(layout *dayLayout, pinned map[int]models.PlanSlot, works map[string]tasksclient.TaskOption, sharePercent int) map[int]string {
-	workAt := map[int]string{}
+func planWindowPositions(layout *dayLayout, pinned map[int]models.PlanSlot, works map[string]tasksclient.TaskOption, sharePercent int) map[int]string {
+	windowAt := map[int]string{}
 	if layout == nil || len(works) == 0 || sharePercent <= 0 {
-		return workAt
+		return windowAt
 	}
 	if sharePercent > 100 {
 		sharePercent = 100
 	}
 	for _, b := range layout.blocks {
-		if b.workID == "" {
+		if b.windowID == "" {
 			continue
 		}
-		if _, ok := works[b.workID]; !ok {
+		if _, ok := works[b.windowID]; !ok {
 			continue
 		}
 		n := b.end - b.start
@@ -816,7 +816,7 @@ func planWorkPositions(layout *dayLayout, pinned map[int]models.PlanSlot, works 
 		free := make([]int, 0, n)
 		for i := b.start; i < b.end; i++ {
 			if sl, ok := pinned[i]; ok {
-				if sl.TaskExternalID != nil && *sl.TaskExternalID == b.workID {
+				if sl.TaskExternalID != nil && *sl.TaskExternalID == b.windowID {
 					quota--
 				}
 				continue
@@ -833,10 +833,10 @@ func planWorkPositions(layout *dayLayout, pinned map[int]models.PlanSlot, works 
 			}
 			otherLeft := len(free) - fi - workLeft
 			if workLeft > otherLeft {
-				workAt[pos] = b.workID
+				windowAt[pos] = b.windowID
 				workLeft--
 			}
 		}
 	}
-	return workAt
+	return windowAt
 }

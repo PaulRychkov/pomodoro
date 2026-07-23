@@ -166,9 +166,9 @@ type Settings struct {
 	ShortBreakSeconds    int           `gorm:"not null" json:"short_break_seconds"`
 	LongBreakSeconds     int           `gorm:"not null" json:"long_break_seconds"`
 	DayBlocks            IntList       `gorm:"type:jsonb;not null" json:"day_blocks"`
-	StudyBeforeWorkMin   int           `gorm:"column:study_before_work_minutes;not null;default:80" json:"study_before_work_minutes"`
-	StudyAfterWorkMin    int           `gorm:"column:study_after_work_minutes;not null;default:90" json:"study_after_work_minutes"`
-	WorkSharePercent     int           `gorm:"column:work_share_percent;not null;default:67" json:"work_share_percent"`
+	PlanBeforeWindowMin  int           `gorm:"column:plan_before_window_minutes;not null;default:80" json:"plan_before_window_minutes"`
+	PlanAfterWindowMin   int           `gorm:"column:plan_after_window_minutes;not null;default:90" json:"plan_after_window_minutes"`
+	WindowSharePercent   int           `gorm:"column:window_share_percent;not null;default:67" json:"window_share_percent"`
 	AutoStartBreak       bool          `gorm:"not null" json:"auto_start_break"`
 	AutoStartFocus       bool          `gorm:"not null" json:"auto_start_focus"`
 	SoundEnabled         bool          `gorm:"not null" json:"sound_enabled"`
@@ -187,9 +187,9 @@ func DefaultSettings() Settings {
 		ShortBreakSeconds:    300,
 		LongBreakSeconds:     900,
 		DayBlocks:            IntList{4, 4},
-		StudyBeforeWorkMin:   80,
-		StudyAfterWorkMin:    90,
-		WorkSharePercent:     67,
+		PlanBeforeWindowMin:  80,
+		PlanAfterWindowMin:   90,
+		WindowSharePercent:   67,
 		AutoStartBreak:       true,
 		AutoStartFocus:       false,
 		SoundEnabled:         true,

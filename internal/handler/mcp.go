@@ -129,32 +129,32 @@ type setPlanSlotInput struct {
 }
 
 type planSettingsInput struct {
-	StudyBeforeWorkMinutes *int  `json:"study_before_work_minutes,omitempty" jsonschema:"минут учёбы до первого рабочего окна"`
-	StudyAfterWorkMinutes  *int  `json:"study_after_work_minutes,omitempty" jsonschema:"минут учёбы после последнего рабочего окна"`
-	WorkSharePercent       *int  `json:"work_share_percent,omitempty" jsonschema:"процент помидоров рабочего окна, отдаваемый задаче окна (0-100)"`
-	DayBlocks              []int `json:"day_blocks,omitempty" jsonschema:"размеры блоков дня, например [3,3,3]"`
+	PlanBeforeWindowMinutes *int  `json:"plan_before_window_minutes,omitempty" jsonschema:"минут учёбы до первого рабочего окна"`
+	PlanAfterWindowMinutes  *int  `json:"plan_after_window_minutes,omitempty" jsonschema:"минут учёбы после последнего рабочего окна"`
+	WindowSharePercent      *int  `json:"window_share_percent,omitempty" jsonschema:"процент помидоров рабочего окна, отдаваемый задаче окна (0-100)"`
+	DayBlocks               []int `json:"day_blocks,omitempty" jsonschema:"размеры блоков дня, например [3,3,3]"`
 }
 
 type planSettingsOutput struct {
-	StudyBeforeWorkMinutes int   `json:"study_before_work_minutes"`
-	StudyAfterWorkMinutes  int   `json:"study_after_work_minutes"`
-	WorkSharePercent       int   `json:"work_share_percent"`
-	DayBlocks              []int `json:"day_blocks"`
+	PlanBeforeWindowMinutes int   `json:"plan_before_window_minutes"`
+	PlanAfterWindowMinutes  int   `json:"plan_after_window_minutes"`
+	WindowSharePercent      int   `json:"window_share_percent"`
+	DayBlocks               []int `json:"day_blocks"`
 }
 
 func (h *Handler) mcpUpdatePlanSettings(ctx context.Context, _ *mcp.CallToolRequest, in planSettingsInput) (*mcp.CallToolResult, planSettingsOutput, error) {
 	s := h.engine.Settings()
 	changed := false
-	if in.StudyBeforeWorkMinutes != nil {
-		s.StudyBeforeWorkMin = clampInt(*in.StudyBeforeWorkMinutes, 0, 600)
+	if in.PlanBeforeWindowMinutes != nil {
+		s.PlanBeforeWindowMin = clampInt(*in.PlanBeforeWindowMinutes, 0, 600)
 		changed = true
 	}
-	if in.StudyAfterWorkMinutes != nil {
-		s.StudyAfterWorkMin = clampInt(*in.StudyAfterWorkMinutes, 0, 600)
+	if in.PlanAfterWindowMinutes != nil {
+		s.PlanAfterWindowMin = clampInt(*in.PlanAfterWindowMinutes, 0, 600)
 		changed = true
 	}
-	if in.WorkSharePercent != nil {
-		s.WorkSharePercent = clampInt(*in.WorkSharePercent, 0, 100)
+	if in.WindowSharePercent != nil {
+		s.WindowSharePercent = clampInt(*in.WindowSharePercent, 0, 100)
 		changed = true
 	}
 	if len(in.DayBlocks) > 0 {
@@ -173,10 +173,10 @@ func (h *Handler) mcpUpdatePlanSettings(ctx context.Context, _ *mcp.CallToolRequ
 		s = saved
 	}
 	return nil, planSettingsOutput{
-		StudyBeforeWorkMinutes: s.StudyBeforeWorkMin,
-		StudyAfterWorkMinutes:  s.StudyAfterWorkMin,
-		WorkSharePercent:       s.WorkSharePercent,
-		DayBlocks:              s.DayBlocks,
+		PlanBeforeWindowMinutes: s.PlanBeforeWindowMin,
+		PlanAfterWindowMinutes:  s.PlanAfterWindowMin,
+		WindowSharePercent:      s.WindowSharePercent,
+		DayBlocks:               s.DayBlocks,
 	}, nil
 }
 

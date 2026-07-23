@@ -103,8 +103,8 @@ func workTask(id, title string, startMin, durMin int) tasksclient.DueTask {
 
 func settingsStudy(before, after int, blocks ...int) models.Settings {
 	s := settingsWith(blocks...)
-	s.StudyBeforeWorkMin = before
-	s.StudyAfterWorkMin = after
+	s.PlanBeforeWindowMin = before
+	s.PlanAfterWindowMin = after
 	return s
 }
 
@@ -114,7 +114,7 @@ func TestBuildSlotsWorkQuotaBlocksOf3(t *testing.T) {
 		workTask("w", "Работа", 540, 100),
 		dueTask("a", "A", 500),
 	}
-	layout := computeDayLayout(settings, workWindowsOf(due))
+	layout := computeDayLayout(settings, timeWindowsOf(due))
 	slots := buildSlots("2026-07-16", layout.total, nil, due, nil, settings, true, 0, layout)
 	got := taskIDs(slots)
 	want := []string{"a", "a", "w", "w", "a"}
@@ -131,7 +131,7 @@ func TestBuildSlotsWorkQuotaBlocksOf4(t *testing.T) {
 		workTask("w", "Работа", 540, 115),
 		dueTask("a", "A", 500),
 	}
-	layout := computeDayLayout(settings, workWindowsOf(due))
+	layout := computeDayLayout(settings, timeWindowsOf(due))
 	slots := buildSlots("2026-07-16", layout.total, nil, due, nil, settings, true, 0, layout)
 	got := taskIDs(slots)
 	want := []string{"a", "w", "a", "w"}
@@ -145,21 +145,21 @@ func TestBuildSlotsWorkQuotaBlocksOf4(t *testing.T) {
 func TestComputeDayLayoutFullWeekday(t *testing.T) {
 	settings := settingsStudy(80, 90, 3)
 	due := []tasksclient.DueTask{workTask("w", "Работа", 540, 540)}
-	layout := computeDayLayout(settings, workWindowsOf(due))
+	layout := computeDayLayout(settings, timeWindowsOf(due))
 	if layout.total != 21 {
 		t.Fatalf("weekday capacity: got %d slots, want 21 (blocks: %+v)", layout.total, layout.blocks)
 	}
 	works := map[string]tasksclient.TaskOption{"w": due[0].Option}
-	workAt := planWorkPositions(layout, map[int]models.PlanSlot{}, works, 67)
-	if len(workAt) != 10 {
-		t.Fatalf("work slots: got %d, want 10 (%v)", len(workAt), workAt)
+	windowAt := planWindowPositions(layout, map[int]models.PlanSlot{}, works, 67)
+	if len(windowAt) != 10 {
+		t.Fatalf("work slots: got %d, want 10 (%v)", len(windowAt), windowAt)
 	}
-	if workAt[0] != "" || workAt[1] != "" || workAt[2] != "" {
-		t.Fatalf("morning study slots must stay free of work: %v", workAt)
+	if windowAt[0] != "" || windowAt[1] != "" || windowAt[2] != "" {
+		t.Fatalf("morning study slots must stay free of work: %v", windowAt)
 	}
 	for i := layout.total - 3; i < layout.total; i++ {
-		if workAt[i] != "" {
-			t.Fatalf("evening study slots must stay free of work: %v", workAt)
+		if windowAt[i] != "" {
+			t.Fatalf("evening study slots must stay free of work: %v", windowAt)
 		}
 	}
 }
@@ -185,7 +185,7 @@ func TestBuildSlotsPinnedWorkCountsTowardQuota(t *testing.T) {
 		workTask("w", "Работа", 540, 100),
 		dueTask("a", "A", 500),
 	}
-	layout := computeDayLayout(settings, workWindowsOf(due))
+	layout := computeDayLayout(settings, timeWindowsOf(due))
 	slots := buildSlots("2026-07-16", layout.total, nil, due, existing, settings, true, 0, layout)
 	got := taskIDs(slots)
 	want := []string{"a", "a", "w", "w", "a"}
@@ -206,7 +206,7 @@ func TestBuildSlotsTwoWorkWindows(t *testing.T) {
 		workTask("w2", "Зал", 700, 100),
 		dueTask("a", "A", 500),
 	}
-	layout := computeDayLayout(settings, workWindowsOf(due))
+	layout := computeDayLayout(settings, timeWindowsOf(due))
 	slots := buildSlots("2026-07-16", layout.total, nil, due, nil, settings, true, 0, layout)
 	got := taskIDs(slots)
 	want := []string{"a", "a", "w1", "w1", "a", "a", "a", "w2", "w2", "a"}
