@@ -168,6 +168,7 @@ type Settings struct {
 	DayBlocks            IntList       `gorm:"type:jsonb;not null" json:"day_blocks"`
 	StudyBeforeWorkMin   int           `gorm:"column:study_before_work_minutes;not null;default:80" json:"study_before_work_minutes"`
 	StudyAfterWorkMin    int           `gorm:"column:study_after_work_minutes;not null;default:90" json:"study_after_work_minutes"`
+	WorkSharePercent     int           `gorm:"column:work_share_percent;not null;default:67" json:"work_share_percent"`
 	AutoStartBreak       bool          `gorm:"not null" json:"auto_start_break"`
 	AutoStartFocus       bool          `gorm:"not null" json:"auto_start_focus"`
 	SoundEnabled         bool          `gorm:"not null" json:"sound_enabled"`
@@ -188,6 +189,7 @@ func DefaultSettings() Settings {
 		DayBlocks:            IntList{4, 4},
 		StudyBeforeWorkMin:   80,
 		StudyAfterWorkMin:    90,
+		WorkSharePercent:     67,
 		AutoStartBreak:       true,
 		AutoStartFocus:       false,
 		SoundEnabled:         true,

@@ -297,6 +297,7 @@ export namespace models {
 	    day_blocks: number[];
 	    study_before_work_minutes: number;
 	    study_after_work_minutes: number;
+	    work_share_percent: number;
 	    auto_start_break: boolean;
 	    auto_start_focus: boolean;
 	    sound_enabled: boolean;
@@ -315,6 +316,7 @@ export namespace models {
 	        this.day_blocks = source["day_blocks"];
 	        this.study_before_work_minutes = source["study_before_work_minutes"];
 	        this.study_after_work_minutes = source["study_after_work_minutes"];
+	        this.work_share_percent = source["work_share_percent"];
 	        this.auto_start_break = source["auto_start_break"];
 	        this.auto_start_focus = source["auto_start_focus"];
 	        this.sound_enabled = source["sound_enabled"];

@@ -230,6 +230,55 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
       </section>
 
       <section className="rounded-2xl bg-surface p-5 shadow-sm">
+        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">План дня</h2>
+        <p className="mb-3 text-xs text-muted">
+          Якорь дня — задачи с фиксированным временем и помидорами (например «Работа»). Вокруг них — учёба, внутри их блоков — доля помидоров задаче окна.
+        </p>
+        <label className="flex items-center justify-between gap-4 py-1">
+          <span className="text-sm">Учёба до первого окна</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              max={600}
+              className="w-20 rounded-xl border border-slate-200 px-3 py-1.5 text-right text-sm outline-none focus:border-primary"
+              value={form.study_before_work_minutes}
+              onChange={(e) => patch({ study_before_work_minutes: Math.min(600, Math.max(0, Number(e.target.value) || 0)) })}
+            />
+            <span className="w-8 text-xs text-muted">мин</span>
+          </div>
+        </label>
+        <label className="flex items-center justify-between gap-4 py-1">
+          <span className="text-sm">Учёба после последнего окна</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              max={600}
+              className="w-20 rounded-xl border border-slate-200 px-3 py-1.5 text-right text-sm outline-none focus:border-primary"
+              value={form.study_after_work_minutes}
+              onChange={(e) => patch({ study_after_work_minutes: Math.min(600, Math.max(0, Number(e.target.value) || 0)) })}
+            />
+            <span className="w-8 text-xs text-muted">мин</span>
+          </div>
+        </label>
+        <label className="flex items-center justify-between gap-4 py-1">
+          <span className="text-sm">Доля помидоров задаче окна</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              max={100}
+              className="w-20 rounded-xl border border-slate-200 px-3 py-1.5 text-right text-sm outline-none focus:border-primary"
+              value={form.work_share_percent}
+              onChange={(e) => patch({ work_share_percent: Math.min(100, Math.max(0, Number(e.target.value) || 0)) })}
+            />
+            <span className="w-8 text-xs text-muted">%</span>
+          </div>
+        </label>
+      </section>
+
+      <section className="rounded-2xl bg-surface p-5 shadow-sm">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Звук</h2>
         <Toggle label="Звук окончания" checked={form.sound_enabled} onChange={(v) => patch({ sound_enabled: v })} />
         <div className="mt-2 flex items-center gap-2 text-sm">

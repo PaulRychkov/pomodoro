@@ -114,7 +114,7 @@ func TestBuildSlotsWorkQuotaBlocksOf3(t *testing.T) {
 		workTask("w", "Работа", 540, 100),
 		dueTask("a", "A", 500),
 	}
-	layout := computeDayLayout(settings, workTaskOf(due))
+	layout := computeDayLayout(settings, workWindowsOf(due))
 	slots := buildSlots("2026-07-16", layout.total, nil, due, nil, settings, true, 0, layout)
 	got := taskIDs(slots)
 	want := []string{"a", "a", "w", "w", "a"}
@@ -131,7 +131,7 @@ func TestBuildSlotsWorkQuotaBlocksOf4(t *testing.T) {
 		workTask("w", "Работа", 540, 115),
 		dueTask("a", "A", 500),
 	}
-	layout := computeDayLayout(settings, workTaskOf(due))
+	layout := computeDayLayout(settings, workWindowsOf(due))
 	slots := buildSlots("2026-07-16", layout.total, nil, due, nil, settings, true, 0, layout)
 	got := taskIDs(slots)
 	want := []string{"a", "w", "a", "w"}
@@ -145,19 +145,20 @@ func TestBuildSlotsWorkQuotaBlocksOf4(t *testing.T) {
 func TestComputeDayLayoutFullWeekday(t *testing.T) {
 	settings := settingsStudy(80, 90, 3)
 	due := []tasksclient.DueTask{workTask("w", "Работа", 540, 540)}
-	layout := computeDayLayout(settings, workTaskOf(due))
+	layout := computeDayLayout(settings, workWindowsOf(due))
 	if layout.total != 21 {
 		t.Fatalf("weekday capacity: got %d slots, want 21 (blocks: %+v)", layout.total, layout.blocks)
 	}
-	workAt := planWorkPositions(layout, map[int]models.PlanSlot{}, &due[0].Option)
+	works := map[string]tasksclient.TaskOption{"w": due[0].Option}
+	workAt := planWorkPositions(layout, map[int]models.PlanSlot{}, works, 67)
 	if len(workAt) != 10 {
 		t.Fatalf("work slots: got %d, want 10 (%v)", len(workAt), workAt)
 	}
-	if workAt[0] || workAt[1] || workAt[2] {
+	if workAt[0] != "" || workAt[1] != "" || workAt[2] != "" {
 		t.Fatalf("morning study slots must stay free of work: %v", workAt)
 	}
 	for i := layout.total - 3; i < layout.total; i++ {
-		if workAt[i] {
+		if workAt[i] != "" {
 			t.Fatalf("evening study slots must stay free of work: %v", workAt)
 		}
 	}
@@ -184,7 +185,7 @@ func TestBuildSlotsPinnedWorkCountsTowardQuota(t *testing.T) {
 		workTask("w", "Работа", 540, 100),
 		dueTask("a", "A", 500),
 	}
-	layout := computeDayLayout(settings, workTaskOf(due))
+	layout := computeDayLayout(settings, workWindowsOf(due))
 	slots := buildSlots("2026-07-16", layout.total, nil, due, existing, settings, true, 0, layout)
 	got := taskIDs(slots)
 	want := []string{"a", "a", "w", "w", "a"}
@@ -195,6 +196,62 @@ func TestBuildSlotsPinnedWorkCountsTowardQuota(t *testing.T) {
 	}
 	if !slots[2].Pinned {
 		t.Fatalf("pinned work slot must stay pinned: %+v", slots[2])
+	}
+}
+
+func TestBuildSlotsTwoWorkWindows(t *testing.T) {
+	settings := settingsStudy(30, 30, 3)
+	due := []tasksclient.DueTask{
+		workTask("w1", "Работа", 540, 100),
+		workTask("w2", "Зал", 700, 100),
+		dueTask("a", "A", 500),
+	}
+	layout := computeDayLayout(settings, workWindowsOf(due))
+	slots := buildSlots("2026-07-16", layout.total, nil, due, nil, settings, true, 0, layout)
+	got := taskIDs(slots)
+	want := []string{"a", "a", "w1", "w1", "a", "a", "a", "w2", "w2", "a"}
+	if len(got) != len(want) {
+		t.Fatalf("total: got %d want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("slot %d: got %q want %q (all: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestBuildSlotsScalesStudyLoad(t *testing.T) {
+	due := []tasksclient.DueTask{
+		dueTask("a", "A", 200),
+		dueTask("b", "B", 100),
+		dueTask("c", "C", 50),
+	}
+	slots := buildSlots("2026-07-16", 6, nil, due, nil, settingsWith(3, 3), true, 0, nil)
+	got := taskIDs(slots)
+	want := []string{"a", "a", "a", "b", "b", "c"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("slot %d: got %q want %q (all: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestBuildSlotsScalingKeepsEveryTask(t *testing.T) {
+	due := []tasksclient.DueTask{
+		dueTask("a", "A", 500),
+		dueTask("b", "B", 20),
+		dueTask("c", "C", 10),
+	}
+	slots := buildSlots("2026-07-16", 4, nil, due, nil, settingsWith(4), true, 0, nil)
+	got := taskIDs(slots)
+	counts := map[string]int{}
+	for _, id := range got {
+		counts[id]++
+	}
+	for _, id := range []string{"a", "b", "c"} {
+		if counts[id] == 0 {
+			t.Fatalf("task %s dropped from plan: %v", id, got)
+		}
 	}
 }
 

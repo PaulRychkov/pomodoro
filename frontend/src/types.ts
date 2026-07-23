@@ -54,6 +54,9 @@ export interface Settings {
   short_break_seconds: number;
   long_break_seconds: number;
   day_blocks: number[];
+  study_before_work_minutes: number;
+  study_after_work_minutes: number;
+  work_share_percent: number;
   auto_start_break: boolean;
   auto_start_focus: boolean;
   sound_enabled: boolean;

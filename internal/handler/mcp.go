@@ -105,6 +105,11 @@ func (h *Handler) newMCPHandler() http.Handler {
 		Description: "Перераспределить незакреплённые слоты по актуальным задачам и их трудозатратам (effort_minutes)",
 	}, h.mcpRefreshDayPlan)
 
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "update_plan_settings",
+		Description: "Настройки раскладки дня: учёба до/после рабочих окон (минуты), доля помидоров задаче окна (%), размеры блоков. Пустой вызов просто возвращает текущие настройки",
+	}, h.mcpUpdatePlanSettings)
+
 	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true})
 }
 
@@ -121,6 +126,68 @@ type setPlanSlotInput struct {
 	ClearBinding   bool   `json:"clear_binding,omitempty" jsonschema:"true — убрать задачу/метку со слота"`
 	FocusMinutes   int    `json:"focus_minutes,omitempty" jsonschema:"длительность этого помидора в минутах; -1 — вернуть дефолт; 0/не задано — не менять"`
 	BreakMinutes   int    `json:"break_minutes,omitempty" jsonschema:"длительность перерыва после этого помидора в минутах; -1 — вернуть дефолт; 0/не задано — не менять"`
+}
+
+type planSettingsInput struct {
+	StudyBeforeWorkMinutes *int  `json:"study_before_work_minutes,omitempty" jsonschema:"минут учёбы до первого рабочего окна"`
+	StudyAfterWorkMinutes  *int  `json:"study_after_work_minutes,omitempty" jsonschema:"минут учёбы после последнего рабочего окна"`
+	WorkSharePercent       *int  `json:"work_share_percent,omitempty" jsonschema:"процент помидоров рабочего окна, отдаваемый задаче окна (0-100)"`
+	DayBlocks              []int `json:"day_blocks,omitempty" jsonschema:"размеры блоков дня, например [3,3,3]"`
+}
+
+type planSettingsOutput struct {
+	StudyBeforeWorkMinutes int   `json:"study_before_work_minutes"`
+	StudyAfterWorkMinutes  int   `json:"study_after_work_minutes"`
+	WorkSharePercent       int   `json:"work_share_percent"`
+	DayBlocks              []int `json:"day_blocks"`
+}
+
+func (h *Handler) mcpUpdatePlanSettings(ctx context.Context, _ *mcp.CallToolRequest, in planSettingsInput) (*mcp.CallToolResult, planSettingsOutput, error) {
+	s := h.engine.Settings()
+	changed := false
+	if in.StudyBeforeWorkMinutes != nil {
+		s.StudyBeforeWorkMin = clampInt(*in.StudyBeforeWorkMinutes, 0, 600)
+		changed = true
+	}
+	if in.StudyAfterWorkMinutes != nil {
+		s.StudyAfterWorkMin = clampInt(*in.StudyAfterWorkMinutes, 0, 600)
+		changed = true
+	}
+	if in.WorkSharePercent != nil {
+		s.WorkSharePercent = clampInt(*in.WorkSharePercent, 0, 100)
+		changed = true
+	}
+	if len(in.DayBlocks) > 0 {
+		blocks := make(models.IntList, 0, len(in.DayBlocks))
+		for _, b := range in.DayBlocks {
+			blocks = append(blocks, clampInt(b, 1, 16))
+		}
+		s.DayBlocks = blocks
+		changed = true
+	}
+	if changed {
+		saved, err := h.engine.UpdateSettings(ctx, s)
+		if err != nil {
+			return nil, planSettingsOutput{}, err
+		}
+		s = saved
+	}
+	return nil, planSettingsOutput{
+		StudyBeforeWorkMinutes: s.StudyBeforeWorkMin,
+		StudyAfterWorkMinutes:  s.StudyAfterWorkMin,
+		WorkSharePercent:       s.WorkSharePercent,
+		DayBlocks:              s.DayBlocks,
+	}, nil
+}
+
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 func (h *Handler) mcpGetDayPlan(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, planOutput, error) {
