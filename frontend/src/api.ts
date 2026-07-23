@@ -1,4 +1,4 @@
-import type { Binding, Session, Settings, State, StatePush, TaskOption } from "./types";
+import type { Binding, PickerNode, PlanSlot, Preset, ScheduleEntry, Session, Settings, SlotPatch, State, StatePush, TaskOption } from "./types";
 
 interface GoApp {
   GetState(): Promise<State>;
@@ -11,6 +11,16 @@ interface GoApp {
   Relabel(id: string, b: Binding): Promise<Session>;
   ListTodaySessions(): Promise<Session[]>;
   SearchTasks(query: string): Promise<TaskOption[]>;
+  GetDayPlan(): Promise<PlanSlot[]>;
+  RefreshDayPlan(): Promise<PlanSlot[]>;
+  SetPlanSlot(idx: number, p: SlotPatch): Promise<PlanSlot[]>;
+  ListPlanCandidates(): Promise<TaskOption[]>;
+  GetPickerTree(): Promise<PickerNode[]>;
+  ListPresets(): Promise<Preset[]>;
+  SavePreset(name: string): Promise<Preset[]>;
+  DeletePreset(name: string): Promise<Preset[]>;
+  GetPresetSchedule(): Promise<ScheduleEntry[]>;
+  AssignPreset(weekday: number, presetName: string): Promise<ScheduleEntry[]>;
   GetSettings(): Promise<Settings>;
   SaveSettings(s: Settings): Promise<Settings>;
   ChooseSoundFile(): Promise<string>;
@@ -49,6 +59,16 @@ export const api = {
   relabel: (id: string, b: Binding) => app().Relabel(id, b),
   listTodaySessions: () => app().ListTodaySessions(),
   searchTasks: (query: string) => app().SearchTasks(query),
+  getDayPlan: () => app().GetDayPlan(),
+  refreshDayPlan: () => app().RefreshDayPlan(),
+  setPlanSlot: (idx: number, p: SlotPatch) => app().SetPlanSlot(idx, p),
+  listPlanCandidates: () => app().ListPlanCandidates(),
+  getPickerTree: () => app().GetPickerTree(),
+  listPresets: () => app().ListPresets(),
+  savePreset: (name: string) => app().SavePreset(name),
+  deletePreset: (name: string) => app().DeletePreset(name),
+  getPresetSchedule: () => app().GetPresetSchedule(),
+  assignPreset: (weekday: number, presetName: string) => app().AssignPreset(weekday, presetName),
   getSettings: () => app().GetSettings(),
   saveSettings: (s: Settings) => app().SaveSettings(s),
   chooseSoundFile: () => app().ChooseSoundFile(),

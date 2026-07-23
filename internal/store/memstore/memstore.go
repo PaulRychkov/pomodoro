@@ -17,6 +17,9 @@ type Mem struct {
 	sessions map[uuid.UUID]models.Session
 	settings models.Settings
 	outbox   map[uuid.UUID]models.OutboxEvent
+	plans    map[string][]models.PlanSlot
+	presets  map[uuid.UUID]models.Preset
+	schedule map[int]uuid.UUID
 	seq      int
 }
 
@@ -25,12 +28,124 @@ func New() *Mem {
 		sessions: map[uuid.UUID]models.Session{},
 		settings: models.DefaultSettings(),
 		outbox:   map[uuid.UUID]models.OutboxEvent{},
+		plans:    map[string][]models.PlanSlot{},
+		presets:  map[uuid.UUID]models.Preset{},
+		schedule: map[int]uuid.UUID{},
 	}
 }
 
 func (m *Mem) Sessions() store.SessionRepo  { return (*memSessions)(m) }
 func (m *Mem) Settings() store.SettingsRepo { return (*memSettings)(m) }
 func (m *Mem) Outbox() store.OutboxRepo     { return (*memOutbox)(m) }
+func (m *Mem) Plans() store.PlanRepo        { return (*memPlans)(m) }
+func (m *Mem) Presets() store.PresetRepo    { return (*memPresets)(m) }
+
+type memPresets Mem
+
+func (m *memPresets) List(_ context.Context) ([]models.Preset, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]models.Preset, 0, len(m.presets))
+	for _, p := range m.presets {
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func (m *memPresets) GetByName(_ context.Context, name string) (*models.Preset, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, p := range m.presets {
+		if p.Name == name {
+			cp := p
+			return &cp, nil
+		}
+	}
+	return nil, nil
+}
+
+func (m *memPresets) Save(_ context.Context, p *models.Preset) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, existing := range m.presets {
+		if existing.Name == p.Name {
+			p.ID = id
+			m.presets[id] = *p
+			return nil
+		}
+	}
+	if p.ID == uuid.Nil {
+		p.ID = uuid.New()
+	}
+	m.presets[p.ID] = *p
+	return nil
+}
+
+func (m *memPresets) Delete(_ context.Context, id uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.presets, id)
+	for wd, pid := range m.schedule {
+		if pid == id {
+			delete(m.schedule, wd)
+		}
+	}
+	return nil
+}
+
+func (m *memPresets) Schedule(_ context.Context) ([]models.PresetAssignment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]models.PresetAssignment, 0, len(m.schedule))
+	for wd, pid := range m.schedule {
+		out = append(out, models.PresetAssignment{Weekday: wd, PresetID: pid})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Weekday < out[j].Weekday })
+	return out, nil
+}
+
+func (m *memPresets) Assign(_ context.Context, weekday int, presetID *uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if presetID == nil {
+		delete(m.schedule, weekday)
+		return nil
+	}
+	m.schedule[weekday] = *presetID
+	return nil
+}
+
+type memPlans Mem
+
+func (m *memPlans) ListDay(_ context.Context, date string) ([]models.PlanSlot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := append([]models.PlanSlot(nil), m.plans[date]...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Idx < out[j].Idx })
+	return out, nil
+}
+
+func (m *memPlans) ReplaceDay(_ context.Context, date string, slots []models.PlanSlot) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.plans[date] = append([]models.PlanSlot(nil), slots...)
+	return nil
+}
+
+func (m *memPlans) Upsert(_ context.Context, slot *models.PlanSlot) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	day := m.plans[slot.Date]
+	for i := range day {
+		if day[i].Idx == slot.Idx {
+			day[i] = *slot
+			return nil
+		}
+	}
+	m.plans[slot.Date] = append(day, *slot)
+	return nil
+}
 
 func (m *Mem) InTx(ctx context.Context, fn func(r store.Repos) error) error {
 	return fn(m)

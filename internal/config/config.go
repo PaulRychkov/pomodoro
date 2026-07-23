@@ -35,14 +35,14 @@ type Kafka struct {
 
 func (d Database) DSN() string {
 	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=10",
 		d.Host, d.Port, d.User, d.Password, d.Name, d.SSLMode,
 	)
 }
 
 func (d Database) URL() string {
 	return fmt.Sprintf(
-		"postgres://%s:%s@%s:%d/%s?sslmode=%s",
+		"postgres://%s:%s@%s:%d/%s?sslmode=%s&connect_timeout=10",
 		d.User, d.Password, d.Host, d.Port, d.Name, d.SSLMode,
 	)
 }

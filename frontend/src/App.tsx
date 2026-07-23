@@ -3,11 +3,17 @@ import { Coffee, Minus, Pause, PictureInPicture2, Play, Settings as SettingsIcon
 import { api, onModeChange, onStatePush, playChime } from "./api";
 import TimerRing from "./components/TimerRing";
 import DayProgress from "./components/DayProgress";
-import BindingPicker from "./components/BindingPicker";
 import SessionsToday from "./components/SessionsToday";
 import SettingsView from "./components/SettingsView";
+import PlanToday from "./components/PlanToday";
 import Overlay from "./components/Overlay";
-import type { Binding, Settings, State } from "./types";
+import type { Binding, PlanSlot, Settings, State } from "./types";
+
+function slotTitle(slot: PlanSlot | undefined): string | null {
+  if (!slot) return null;
+  if (slot.task) return slot.task.title_snapshot || slot.task.external_id;
+  return slot.label ?? null;
+}
 
 function fmt(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -117,6 +123,23 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (mode === "overlay" && state && state.phase === "idle") {
+      void api.exitOverlay();
+    }
+  }, [mode, state]);
+
+  const [plan, setPlan] = useState<PlanSlot[]>([]);
+
+  const activeSlot = state ? plan.find((s) => s.idx === state.completed_today) : undefined;
+
+  useEffect(() => {
+    if (!state || state.phase !== "idle") {
+      return;
+    }
+    setBinding({ label: activeSlot?.label ?? null, task: activeSlot?.task ?? null });
+  }, [state, activeSlot]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "F9") {
         e.preventDefault();
@@ -191,18 +214,33 @@ export default function App() {
           </div>
         ) : (
           <div className="mx-auto grid max-w-4xl grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-            <div className="flex flex-col items-center gap-6 rounded-2xl bg-surface p-8 shadow-sm">
+            <div className="flex flex-col items-center gap-5 rounded-2xl bg-surface p-8 shadow-sm">
               <p className="text-sm font-medium text-muted">{phaseTitle(state)}</p>
-              <TimerRing size={280} stroke={14} fraction={fraction} color={isBreak ? "#5DC9E2" : "#00ADD8"}>
+              {(() => {
+                const focusing = state.phase === "focus";
+                const nowTitle = focusing
+                  ? state.task
+                    ? state.task.title_snapshot || state.task.external_id
+                    : state.label
+                  : slotTitle(activeSlot);
+                if (isBreak) {
+                  return <p className="text-lg font-semibold text-slate-400">Отдыхай</p>;
+                }
+                if (!nowTitle) {
+                  return <p className="text-lg font-semibold text-slate-400">Свободный помидор</p>;
+                }
+                return (
+                  <div className="text-center">
+                    <p className="text-[11px] uppercase tracking-wide text-muted">{focusing ? "Сейчас" : "Следующее"}</p>
+                    <p className="max-w-md truncate text-xl font-semibold text-ink">{nowTitle}</p>
+                  </div>
+                );
+              })()}
+              <TimerRing size={260} stroke={14} fraction={fraction} color={isBreak ? "#5DC9E2" : "#00ADD8"}>
                 <span className="text-6xl font-semibold tabular-nums tracking-tight">
                   {active ? fmt(remaining) : fmt(state.next_phase === "focus" ? settings.focus_duration_seconds : state.next_phase === "long_break" ? settings.long_break_seconds : settings.short_break_seconds)}
                 </span>
                 {state.paused && <span className="mt-1 text-sm font-medium text-muted">пауза</span>}
-                {active && (state.label || state.task) && (
-                  <span className="mt-1 max-w-44 truncate text-xs text-muted">
-                    {state.task ? state.task.title_snapshot || state.task.external_id : state.label}
-                  </span>
-                )}
               </TimerRing>
 
               <div className="flex items-center gap-3">
@@ -257,21 +295,15 @@ export default function App() {
             </div>
 
             <div className="flex flex-col gap-4">
-              <div className="rounded-2xl bg-surface p-5 shadow-sm">
-                <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Что делаю</h2>
-                {active ? (
-                  <BindingPicker
-                    value={{ label: state.label, task: state.task }}
-                    onChange={(b) => {
-                      if (state.session_id) {
-                        run(api.relabel(state.session_id, b));
-                      }
-                    }}
-                  />
-                ) : (
-                  <BindingPicker value={binding} onChange={setBinding} />
-                )}
-              </div>
+              <PlanToday
+                version={sessionsVersion}
+                blocks={state.day_blocks}
+                activeIdx={state.completed_today}
+                focusing={state.phase === "focus"}
+                defaultFocusMin={Math.round(settings.focus_duration_seconds / 60)}
+                defaultBreakMin={Math.round(settings.short_break_seconds / 60)}
+                onPlanChanged={setPlan}
+              />
               <SessionsToday version={sessionsVersion} />
             </div>
           </div>

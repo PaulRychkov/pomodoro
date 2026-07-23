@@ -9,6 +9,7 @@ import (
 
 	"github.com/PaulRychkov/pomodoro/internal/engine"
 	"github.com/PaulRychkov/pomodoro/internal/models"
+	"github.com/PaulRychkov/pomodoro/internal/plan"
 )
 
 type emptyInput struct{}
@@ -89,7 +90,80 @@ func (h *Handler) newMCPHandler() http.Handler {
 		Description: "Статистика помидоров за сегодня: завершённые, прогресс по блокам дня, фокус-время",
 	}, h.mcpGetTodayStats)
 
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_day_plan",
+		Description: "План помидоров на сегодня: все слоты дня с привязанными задачами; done-слоты уже выполнены",
+	}, h.mcpGetDayPlan)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "set_plan_slot",
+		Description: "Назначить слоту помидора задачу (task_external_id из tasks) или метку; пустой вызов возвращает слот в автораспределение",
+	}, h.mcpSetPlanSlot)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "refresh_day_plan",
+		Description: "Перераспределить незакреплённые слоты по актуальным задачам и их трудозатратам (effort_minutes)",
+	}, h.mcpRefreshDayPlan)
+
 	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true})
+}
+
+type planOutput struct {
+	Slots []plan.SlotView `json:"slots"`
+}
+
+type setPlanSlotInput struct {
+	Idx            int    `json:"idx" jsonschema:"индекс слота 0..N-1"`
+	TaskSource     string `json:"task_source,omitempty" jsonschema:"источник задачи, по умолчанию tasks"`
+	TaskExternalID string `json:"task_external_id,omitempty" jsonschema:"UUID задачи из tasks"`
+	TaskTitle      string `json:"task_title,omitempty" jsonschema:"название задачи для отображения"`
+	Label          string `json:"label,omitempty" jsonschema:"свободная метка вместо задачи"`
+	ClearBinding   bool   `json:"clear_binding,omitempty" jsonschema:"true — убрать задачу/метку со слота"`
+	FocusMinutes   int    `json:"focus_minutes,omitempty" jsonschema:"длительность этого помидора в минутах; -1 — вернуть дефолт; 0/не задано — не менять"`
+	BreakMinutes   int    `json:"break_minutes,omitempty" jsonschema:"длительность перерыва после этого помидора в минутах; -1 — вернуть дефолт; 0/не задано — не менять"`
+}
+
+func (h *Handler) mcpGetDayPlan(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, planOutput, error) {
+	slots, err := h.plan.Day(ctx, false)
+	if err != nil {
+		return nil, planOutput{}, err
+	}
+	return nil, planOutput{Slots: slots}, nil
+}
+
+func (h *Handler) mcpSetPlanSlot(ctx context.Context, _ *mcp.CallToolRequest, in setPlanSlotInput) (*mcp.CallToolResult, planOutput, error) {
+	upd := plan.SlotUpdate{ClearBinding: in.ClearBinding}
+	if in.TaskExternalID != "" {
+		src := in.TaskSource
+		if src == "" {
+			src = "tasks"
+		}
+		upd.Task = &models.TaskRef{Source: src, ExternalID: in.TaskExternalID, TitleSnapshot: in.TaskTitle}
+	} else if in.Label != "" {
+		l := in.Label
+		upd.Label = &l
+	}
+	if in.FocusMinutes != 0 {
+		v := in.FocusMinutes
+		upd.FocusMinutes = &v
+	}
+	if in.BreakMinutes != 0 {
+		v := in.BreakMinutes
+		upd.BreakMinutes = &v
+	}
+	slots, err := h.plan.SetSlot(ctx, in.Idx, upd)
+	if err != nil {
+		return nil, planOutput{}, err
+	}
+	return nil, planOutput{Slots: slots}, nil
+}
+
+func (h *Handler) mcpRefreshDayPlan(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, planOutput, error) {
+	slots, err := h.plan.Day(ctx, true)
+	if err != nil {
+		return nil, planOutput{}, err
+	}
+	return nil, planOutput{Slots: slots}, nil
 }
 
 func (h *Handler) mcpGetActiveSession(ctx context.Context, req *mcp.CallToolRequest, in emptyInput) (*mcp.CallToolResult, activeSessionOutput, error) {

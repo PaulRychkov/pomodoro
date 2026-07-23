@@ -14,7 +14,9 @@ import (
 
 	"github.com/PaulRychkov/pomodoro/internal/engine"
 	"github.com/PaulRychkov/pomodoro/internal/models"
+	"github.com/PaulRychkov/pomodoro/internal/plan"
 	"github.com/PaulRychkov/pomodoro/internal/store/memstore"
+	"github.com/PaulRychkov/pomodoro/internal/tasksclient"
 )
 
 type env struct {
@@ -37,7 +39,13 @@ func newEnv(t *testing.T, mutate func(*models.Settings)) *env {
 	if err := e.Init(context.Background()); err != nil {
 		t.Fatalf("init engine: %v", err)
 	}
-	h := New(e, mem, zap.NewNop())
+	pl := &plan.Service{
+		Store:     mem,
+		Tasks:     tasksclient.New("http://127.0.0.1:1", "tasks"),
+		Settings:  e.Settings,
+		Completed: func() int { return e.Snapshot().CompletedToday },
+	}
+	h := New(e, mem, pl, zap.NewNop())
 	return &env{router: h.Router(), engine: e, mem: mem}
 }
 

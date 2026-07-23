@@ -32,10 +32,27 @@ type OutboxRepo interface {
 	MarkFailed(ctx context.Context, id uuid.UUID, message string) error
 }
 
+type PlanRepo interface {
+	ListDay(ctx context.Context, date string) ([]models.PlanSlot, error)
+	ReplaceDay(ctx context.Context, date string, slots []models.PlanSlot) error
+	Upsert(ctx context.Context, slot *models.PlanSlot) error
+}
+
+type PresetRepo interface {
+	List(ctx context.Context) ([]models.Preset, error)
+	GetByName(ctx context.Context, name string) (*models.Preset, error)
+	Save(ctx context.Context, p *models.Preset) error
+	Delete(ctx context.Context, id uuid.UUID) error
+	Schedule(ctx context.Context) ([]models.PresetAssignment, error)
+	Assign(ctx context.Context, weekday int, presetID *uuid.UUID) error
+}
+
 type Repos interface {
 	Sessions() SessionRepo
 	Settings() SettingsRepo
 	Outbox() OutboxRepo
+	Plans() PlanRepo
+	Presets() PresetRepo
 }
 
 type Store interface {

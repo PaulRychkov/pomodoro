@@ -82,4 +82,49 @@ export interface TaskOption {
   source: string;
   external_id: string;
   title: string;
+  topic_path: string;
+}
+
+export interface PickerNode {
+  kind: "topic" | "task";
+  id: string;
+  name: string;
+  source: string;
+  bind_task_id: string;
+  today: boolean;
+  children: PickerNode[] | null;
+}
+
+export interface PlanSlot {
+  idx: number;
+  task: TaskRef | null;
+  label: string | null;
+  focus_minutes: number | null;
+  break_minutes: number | null;
+  pinned: boolean;
+  done: boolean;
+}
+
+export interface SlotPatch {
+  task?: TaskRef | null;
+  label?: string | null;
+  clear_binding?: boolean;
+  focus_minutes?: number | null;
+  break_minutes?: number | null;
+}
+
+export interface PresetSlot {
+  focus_minutes: number;
+  break_minutes: number;
+}
+
+export interface Preset {
+  id: string;
+  name: string;
+  slots: PresetSlot[];
+}
+
+export interface ScheduleEntry {
+  weekday: number;
+  preset_name: string;
 }

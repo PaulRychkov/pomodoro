@@ -16,6 +16,7 @@ import (
 	"github.com/PaulRychkov/pomodoro/internal/handler"
 	"github.com/PaulRychkov/pomodoro/internal/migrate"
 	"github.com/PaulRychkov/pomodoro/internal/models"
+	"github.com/PaulRychkov/pomodoro/internal/plan"
 	"github.com/PaulRychkov/pomodoro/internal/relay"
 	"github.com/PaulRychkov/pomodoro/internal/store"
 	"github.com/PaulRychkov/pomodoro/internal/tasksclient"
@@ -27,6 +28,7 @@ type App struct {
 	engine   *engine.Engine
 	store    store.Store
 	tasks    *tasksclient.Client
+	plan     *plan.Service
 	log      *zap.Logger
 	initErr  error
 	shutdown func()
@@ -34,8 +36,6 @@ type App struct {
 	overlay  bool
 	mainW    int
 	mainH    int
-	mainX    int
-	mainY    int
 }
 
 type StatePush struct {
@@ -60,6 +60,18 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.engine.SetNotifier(func(st engine.State, reason string) {
 		runtime.EventsEmit(a.ctx, "pomodoro:state", StatePush{State: st, Reason: reason})
+		if reason == "completed" {
+			go func() {
+				taskID, closed, err := a.plan.HandleFocusCompleted(context.Background())
+				if err != nil {
+					a.log.Warn("автозакрытие вхождения", zap.Error(err))
+					return
+				}
+				if closed {
+					a.log.Info("все помидоры задачи выполнены, вхождение закрыто", zap.String("task", taskID))
+				}
+			}()
+		}
 	})
 }
 
@@ -88,8 +100,15 @@ func (a *App) initBackend() error {
 	a.engine = eng
 	a.store = st
 	a.tasks = tasksclient.New(a.cfg.TasksBaseURL, a.cfg.TasksSource)
+	a.plan = &plan.Service{
+		Store:     st,
+		Tasks:     a.tasks,
+		Settings:  eng.Settings,
+		Completed: func() int { return eng.Snapshot().CompletedToday },
+	}
+	eng.SetDurationProvider(a.plan.SlotDurations)
 
-	h := handler.New(eng, st, a.log)
+	h := handler.New(eng, st, a.plan, a.log)
 	srv := &http.Server{Addr: fmt.Sprintf(":%d", a.cfg.HTTPPort), Handler: h.Router()}
 	go func() {
 		a.log.Info("api listening", zap.Int("port", a.cfg.HTTPPort))
@@ -198,13 +217,9 @@ func (a *App) EnterOverlay() error {
 		return nil
 	}
 	a.mainW, a.mainH = runtime.WindowGetSize(a.ctx)
-	a.mainX, a.mainY = runtime.WindowGetPosition(a.ctx)
 	s := a.engine.Settings()
 	runtime.WindowSetAlwaysOnTop(a.ctx, true)
 	runtime.WindowSetSize(a.ctx, s.Overlay.Size, s.Overlay.Size)
-	if s.Overlay.PosX != nil && s.Overlay.PosY != nil {
-		runtime.WindowSetPosition(a.ctx, *s.Overlay.PosX, *s.Overlay.PosY)
-	}
 	a.overlay = true
 	runtime.EventsEmit(a.ctx, "pomodoro:mode", "overlay")
 	return nil
@@ -216,20 +231,14 @@ func (a *App) ExitOverlay() error {
 	if !a.overlay {
 		return nil
 	}
-	x, y := runtime.WindowGetPosition(a.ctx)
-	s := a.engine.Settings()
-	s.Overlay.PosX = &x
-	s.Overlay.PosY = &y
-	if _, err := a.engine.UpdateSettings(a.ctx, s); err != nil {
-		a.log.Warn("save overlay position", zap.Error(err))
-	}
 	runtime.WindowSetAlwaysOnTop(a.ctx, false)
 	if a.mainW > 0 && a.mainH > 0 {
 		runtime.WindowSetSize(a.ctx, a.mainW, a.mainH)
-		runtime.WindowSetPosition(a.ctx, a.mainX, a.mainY)
 	}
+	runtime.WindowCenter(a.ctx)
 	a.overlay = false
 	runtime.EventsEmit(a.ctx, "pomodoro:mode", "main")
+	runtime.WindowUnminimise(a.ctx)
 	return nil
 }
 

@@ -221,3 +221,85 @@ func (s Session) TaskRef() *TaskRef {
 	}
 	return &TaskRef{Source: *s.TaskSource, ExternalID: *s.TaskExternalID, TitleSnapshot: title}
 }
+
+type PlanSlot struct {
+	Date           string    `gorm:"primaryKey" json:"date"`
+	Idx            int       `gorm:"primaryKey" json:"idx"`
+	TaskSource     *string   `json:"task_source"`
+	TaskExternalID *string   `json:"task_external_id"`
+	TaskTitle      *string   `json:"task_title"`
+	Label          *string   `json:"label"`
+	FocusSeconds   *int      `json:"focus_seconds"`
+	BreakSeconds   *int      `json:"break_seconds"`
+	Pinned         bool      `gorm:"not null;default:false" json:"pinned"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+func (PlanSlot) TableName() string { return "plan_slots" }
+
+func (s PlanSlot) Task() *TaskRef {
+	if s.TaskSource == nil || s.TaskExternalID == nil {
+		return nil
+	}
+	title := ""
+	if s.TaskTitle != nil {
+		title = *s.TaskTitle
+	}
+	return &TaskRef{Source: *s.TaskSource, ExternalID: *s.TaskExternalID, TitleSnapshot: title}
+}
+
+func (s *PlanSlot) SetTask(t *TaskRef) {
+	if t == nil {
+		s.TaskSource, s.TaskExternalID, s.TaskTitle = nil, nil, nil
+		return
+	}
+	src, ext, title := t.Source, t.ExternalID, t.TitleSnapshot
+	s.TaskSource, s.TaskExternalID, s.TaskTitle = &src, &ext, &title
+}
+
+type PresetSlot struct {
+	FocusMinutes int `json:"focus_minutes"`
+	BreakMinutes int `json:"break_minutes"`
+}
+
+type PresetSlots []PresetSlot
+
+func (s PresetSlots) Value() (driver.Value, error) {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return nil, fmt.Errorf("marshal preset slots: %w", err)
+	}
+	return string(b), nil
+}
+
+func (s *PresetSlots) Scan(value any) error {
+	switch v := value.(type) {
+	case []byte:
+		return json.Unmarshal(v, s)
+	case string:
+		return json.Unmarshal([]byte(v), s)
+	case nil:
+		*s = nil
+		return nil
+	}
+	return fmt.Errorf("unsupported preset slots type %T", value)
+}
+
+func (PresetSlots) GormDataType() string { return "jsonb" }
+
+type Preset struct {
+	ID        uuid.UUID   `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	Name      string      `gorm:"not null;uniqueIndex" json:"name"`
+	Slots     PresetSlots `gorm:"type:jsonb;not null" json:"slots"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
+}
+
+func (Preset) TableName() string { return "presets" }
+
+type PresetAssignment struct {
+	Weekday  int       `gorm:"primaryKey" json:"weekday"`
+	PresetID uuid.UUID `gorm:"type:uuid;not null" json:"preset_id"`
+}
+
+func (PresetAssignment) TableName() string { return "preset_schedule" }

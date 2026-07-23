@@ -1,7 +1,109 @@
 import { useEffect, useState } from "react";
-import { Music, Play, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { Music, Play, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { api, playChime } from "../api";
-import type { Settings } from "../types";
+import type { Preset, ScheduleEntry, Settings } from "../types";
+
+const WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+
+function PresetsSection() {
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [schedule, setSchedule] = useState<ScheduleEntry[]>([]);
+  const [newName, setNewName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.listPresets().then(setPresets).catch(() => undefined);
+    api.getPresetSchedule().then(setSchedule).catch(() => undefined);
+  }, []);
+
+  const run = (p: Promise<unknown>) =>
+    p.then(() => setError(null)).catch((e) => setError(String(e)));
+
+  const save = () => {
+    if (!newName.trim()) return;
+    run(
+      api.savePreset(newName.trim()).then((list) => {
+        setPresets(list);
+        setNewName("");
+      }),
+    );
+  };
+
+  const remove = (name: string) =>
+    run(
+      api.deletePreset(name).then((list) => {
+        setPresets(list);
+        return api.getPresetSchedule().then(setSchedule);
+      }),
+    );
+
+  const assign = (weekday: number, presetName: string) =>
+    run(api.assignPreset(weekday, presetName).then(setSchedule));
+
+  const assigned = (weekday: number) => schedule.find((s) => s.weekday === weekday)?.preset_name ?? "";
+
+  return (
+    <section className="rounded-2xl bg-surface p-6 shadow-sm lg:col-span-2">
+      <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-muted">Пресеты помидорного дня</h2>
+      <div className="mb-4 flex items-end gap-2">
+        <div className="flex-1">
+          <span className="mb-1 block text-xs text-muted">
+            Сохранить текущий план дня (число слотов и длительности) как пресет
+          </span>
+          <input
+            className="w-full rounded-xl border border-slate-200 px-3 py-1.5 text-sm outline-none focus:border-primary"
+            placeholder="Название пресета, например «Интенсив»"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+          />
+        </div>
+        <button
+          className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark disabled:opacity-40"
+          onClick={save}
+          disabled={!newName.trim()}
+        >
+          <Save size={14} /> Сохранить
+        </button>
+      </div>
+      {presets.length > 0 && (
+        <div className="mb-4 flex flex-col gap-1">
+          {presets.map((p) => (
+            <div key={p.id} className="flex items-center gap-2 text-sm">
+              <span className="font-medium">{p.name}</span>
+              <span className="text-xs text-muted">
+                {p.slots.length} 🍅 · {p.slots.map((s) => `${s.focus_minutes}+${s.break_minutes}`).slice(0, 6).join(", ")}
+                {p.slots.length > 6 ? "…" : ""}
+              </span>
+              <button className="ml-auto rounded-lg p-1 text-muted hover:text-danger" onClick={() => remove(p.name)}>
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 sm:grid-cols-3 lg:grid-cols-4">
+        {WEEKDAYS.map((label, i) => (
+          <label key={label} className="flex items-center justify-between gap-2 text-sm">
+            <span className="w-7 text-muted">{label}</span>
+            <select
+              className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-transparent px-2 py-1 text-xs outline-none focus:border-primary"
+              value={assigned(i + 1)}
+              onChange={(e) => assign(i + 1, e.target.value)}
+            >
+              <option value="">стандарт</option>
+              {presets.map((p) => (
+                <option key={p.id} value={p.name}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
+      </div>
+      {error && <div className="mt-3 text-sm text-danger">{error}</div>}
+    </section>
+  );
+}
 
 interface SettingsViewProps {
   settings: Settings;
@@ -252,6 +354,8 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
           onChange={(v) => patch({ overlay: { ...form.overlay, show_time: v } })}
         />
       </section>
+
+      <PresetsSection />
 
       <div className="flex items-center gap-3 lg:col-span-2">
         <button

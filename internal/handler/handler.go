@@ -11,18 +11,20 @@ import (
 
 	"github.com/PaulRychkov/pomodoro/internal/engine"
 	"github.com/PaulRychkov/pomodoro/internal/models"
+	"github.com/PaulRychkov/pomodoro/internal/plan"
 	"github.com/PaulRychkov/pomodoro/internal/store"
 )
 
 type Handler struct {
 	engine *engine.Engine
 	store  store.Store
+	plan   *plan.Service
 	log    *zap.Logger
 	mcp    http.Handler
 }
 
-func New(e *engine.Engine, st store.Store, log *zap.Logger) *Handler {
-	h := &Handler{engine: e, store: st, log: log}
+func New(e *engine.Engine, st store.Store, pl *plan.Service, log *zap.Logger) *Handler {
+	h := &Handler{engine: e, store: st, plan: pl, log: log}
 	h.mcp = h.newMCPHandler()
 	return h
 }
@@ -46,6 +48,7 @@ func (h *Handler) Router() *gin.Engine {
 	api.PATCH("/sessions/:id", h.patchSession)
 	api.GET("/settings", h.getSettings)
 	api.PUT("/settings", h.putSettings)
+	api.GET("/plan", h.getDayPlan)
 
 	return r
 }
@@ -69,6 +72,15 @@ func (h *Handler) healthz(c *gin.Context) {
 
 func (h *Handler) getState(c *gin.Context) {
 	c.JSON(http.StatusOK, h.engine.Snapshot())
+}
+
+func (h *Handler) getDayPlan(c *gin.Context) {
+	slots, err := h.plan.Day(c.Request.Context(), false)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"slots": slots})
 }
 
 type bindingBody struct {

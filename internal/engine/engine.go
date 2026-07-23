@@ -87,11 +87,14 @@ type State struct {
 
 type Notifier func(state State, reason string)
 
+type DurationProvider func(pomodoroIdx int) (focusSeconds, breakSeconds *int)
+
 type Engine struct {
 	mu             sync.Mutex
 	store          store.Store
 	clock          Clock
 	notify         Notifier
+	durations      DurationProvider
 	settings       models.Settings
 	active         *models.Session
 	nextPhase      Phase
@@ -116,6 +119,12 @@ func (e *Engine) SetNotifier(n Notifier) {
 	if n != nil {
 		e.notify = n
 	}
+}
+
+func (e *Engine) SetDurationProvider(p DurationProvider) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.durations = p
 }
 
 func (e *Engine) Init(ctx context.Context) error {
@@ -255,11 +264,17 @@ func (e *Engine) startFocusLocked(ctx context.Context, b Binding) (State, error)
 		return e.snapshotLocked(), err
 	}
 	now := e.clock.Now()
+	plannedFocus := e.settings.FocusDurationSeconds
+	if e.durations != nil {
+		if f, _ := e.durations(e.completedToday); f != nil && *f > 0 {
+			plannedFocus = *f
+		}
+	}
 	s := &models.Session{
 		ID:                     uuid.New(),
 		Kind:                   models.KindFocus,
 		StartedAt:              now,
-		PlannedDurationSeconds: e.settings.FocusDurationSeconds,
+		PlannedDurationSeconds: plannedFocus,
 		Label:                  b.Label,
 	}
 	if b.Task != nil {
@@ -297,6 +312,11 @@ func (e *Engine) startBreakLocked(ctx context.Context) (State, error) {
 	planned := e.settings.ShortBreakSeconds
 	if phase == PhaseLongBreak {
 		planned = e.settings.LongBreakSeconds
+	}
+	if e.durations != nil && e.completedToday > 0 {
+		if _, br := e.durations(e.completedToday - 1); br != nil && *br > 0 {
+			planned = *br
+		}
 	}
 	now := e.clock.Now()
 	s := &models.Session{

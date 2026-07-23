@@ -21,18 +21,27 @@ export default function Overlay({ state, remaining, settings }: OverlayProps) {
   const fraction = active && state.planned_seconds > 0 ? remaining / state.planned_seconds : 0;
   const isBreak = state.phase === "short_break" || state.phase === "long_break";
   const color = isBreak ? "#5DC9E2" : "#00ADD8";
+  const taskTitle = state.task ? state.task.title_snapshot || state.task.external_id : state.label;
+  const hint = isBreak ? "Перерыв" : taskTitle ?? "Фокус";
 
   return (
     <div className="draggable group flex h-screen w-screen select-none items-center justify-center">
       <div
-        className="no-drag relative"
+        className="draggable relative"
         style={{ width: o.size, height: o.size }}
         onDoubleClick={() => void api.exitOverlay()}
-        title="Двойной клик или F9 — развернуть"
+        title={`${hint} · тяни мышью, чтобы двигать · двойной клик или F9 — развернуть`}
       >
-        <div style={{ opacity: o.circle_opacity }}>
+        <div className="draggable" style={{ opacity: o.circle_opacity }}>
           <TimerPie size={o.size} fraction={fraction} color={color} />
         </div>
+        {active && taskTitle && (
+          <div className="pointer-events-none absolute inset-x-1 top-1 flex justify-center opacity-0 transition group-hover:opacity-100">
+            <span className="max-w-full truncate rounded bg-slate-800/85 px-1.5 py-0.5 text-[10px] font-medium text-white">
+              {taskTitle}
+            </span>
+          </div>
+        )}
         {o.show_time && active && (
           <div
             className="pointer-events-none absolute inset-0 flex items-center justify-center"
@@ -52,9 +61,7 @@ export default function Overlay({ state, remaining, settings }: OverlayProps) {
           </div>
         )}
         {active && (
-          <div
-            className="absolute inset-x-0 -bottom-2 flex justify-center gap-2 opacity-0 transition group-hover:opacity-100"
-          >
+          <div className="no-drag absolute inset-x-0 bottom-1 flex justify-center gap-2 opacity-0 transition group-hover:opacity-100">
             <div className="flex gap-2" style={{ opacity: o.buttons_opacity }}>
               <button
                 className="rounded-full bg-slate-800/80 p-1.5 text-white hover:bg-primary"
