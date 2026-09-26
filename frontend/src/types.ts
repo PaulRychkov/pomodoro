@@ -24,6 +24,7 @@ export interface State {
   label: string | null;
   task: TaskRef | null;
   completed_today: number;
+  credit_today: number;
   day_blocks: number[];
   block_index: number;
   pos_in_block: number;
@@ -31,6 +32,7 @@ export interface State {
   day_total: number;
   day_complete: boolean;
   sound_enabled: boolean;
+  settings_stamp: string;
 }
 
 export interface StatePush {
@@ -78,6 +80,8 @@ export interface Session {
   task_external_id: string | null;
   task_title_snapshot: string | null;
   relabeled_at: string | null;
+  focus_seconds: number | null;
+  credit_twelfths: number | null;
   created_at: string;
 }
 
@@ -103,9 +107,11 @@ export interface PlanSlot {
   task: TaskRef | null;
   label: string | null;
   focus_minutes: number | null;
+  start_minutes: number | null;
   break_minutes: number | null;
   pinned: boolean;
   done: boolean;
+  overflow: boolean;
 }
 
 export interface SlotPatch {

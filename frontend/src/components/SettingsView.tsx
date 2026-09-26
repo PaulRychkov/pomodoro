@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Music, Play, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
-import { api, playChime } from "../api";
+import { api, isDesktop, playChime } from "../api";
 import type { Preset, ScheduleEntry, Settings } from "../types";
 
 const WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -43,10 +43,10 @@ function PresetsSection() {
   const assigned = (weekday: number) => schedule.find((s) => s.weekday === weekday)?.preset_name ?? "";
 
   return (
-    <section className="rounded-2xl bg-surface p-6 shadow-sm lg:col-span-2">
+    <section className="rounded-2xl bg-surface p-4 shadow-sm sm:p-6 lg:col-span-2">
       <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-muted">Пресеты помидорного дня</h2>
-      <div className="mb-4 flex items-end gap-2">
-        <div className="flex-1">
+      <div className="mb-4 flex flex-wrap items-end gap-2">
+        <div className="min-w-[200px] flex-1">
           <span className="mb-1 block text-xs text-muted">
             Сохранить текущий план дня (число слотов и длительности) как пресет
           </span>
@@ -68,9 +68,9 @@ function PresetsSection() {
       {presets.length > 0 && (
         <div className="mb-4 flex flex-col gap-1">
           {presets.map((p) => (
-            <div key={p.id} className="flex items-center gap-2 text-sm">
-              <span className="font-medium">{p.name}</span>
-              <span className="text-xs text-muted">
+            <div key={p.id} className="flex min-w-0 items-center gap-2 text-sm">
+              <span className="shrink-0 font-medium">{p.name}</span>
+              <span className="min-w-0 truncate text-xs text-muted">
                 {p.slots.length} 🍅 · {p.slots.map((s) => `${s.focus_minutes}+${s.break_minutes}`).slice(0, 6).join(", ")}
                 {p.slots.length > 6 ? "…" : ""}
               </span>
@@ -183,7 +183,7 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      <section className="rounded-2xl bg-surface p-5 shadow-sm">
+      <section className="rounded-2xl bg-surface p-4 shadow-sm sm:p-5">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Длительности</h2>
         <MinutesInput label="Фокус" value={form.focus_duration_seconds} onChange={(v) => patch({ focus_duration_seconds: v })} />
         <MinutesInput label="Короткий перерыв" value={form.short_break_seconds} onChange={(v) => patch({ short_break_seconds: v })} />
@@ -194,7 +194,7 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
         </div>
       </section>
 
-      <section className="rounded-2xl bg-surface p-5 shadow-sm">
+      <section className="rounded-2xl bg-surface p-4 shadow-sm sm:p-5">
         <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Блоки дня</h2>
         <p className="mb-3 text-xs text-muted">
           Число помидоров в каждом блоке. Внутри блока — короткие перерывы, между блоками — длинный.
@@ -221,7 +221,7 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
           ))}
           <button
             className="flex items-center gap-1 rounded-xl border border-dashed border-slate-300 px-3 py-1.5 text-sm text-muted hover:border-primary hover:text-primary-dark disabled:opacity-30"
-            disabled={form.day_blocks.length >= 8}
+            disabled={form.day_blocks.length >= 24}
             onClick={() => patch({ day_blocks: [...form.day_blocks, 4] })}
           >
             <Plus size={14} /> блок
@@ -229,7 +229,7 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
         </div>
       </section>
 
-      <section className="rounded-2xl bg-surface p-5 shadow-sm">
+      <section className="rounded-2xl bg-surface p-4 shadow-sm sm:p-5">
         <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">План дня</h2>
         <p className="mb-3 text-xs text-muted">
           Якорь дня — задачи с фиксированным временем и помидорами (окна дня). Вокруг и между окнами — гибкие задачи, внутри блоков окна — доля помидоров его задаче.
@@ -278,7 +278,7 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
         </label>
       </section>
 
-      <section className="rounded-2xl bg-surface p-5 shadow-sm">
+      <section className="rounded-2xl bg-surface p-4 shadow-sm sm:p-5">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Звук</h2>
         <Toggle label="Звук окончания" checked={form.sound_enabled} onChange={(v) => patch({ sound_enabled: v })} />
         <div className="mt-2 flex items-center gap-2 text-sm">
@@ -291,6 +291,11 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
           <button
             className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm hover:border-primary"
             onClick={() => {
+              const host = (window as unknown as { AndroidHost?: { pickSound: () => void } }).AndroidHost;
+              if (host?.pickSound) {
+                host.pickSound();
+                return;
+              }
               api
                 .chooseSoundFile()
                 .then((path) => {
@@ -320,7 +325,7 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
         <p className="mt-2 text-xs text-muted">Свой файл начнёт играть после сохранения настроек.</p>
       </section>
 
-      <section className="rounded-2xl bg-surface p-5 shadow-sm">
+      <section className={"rounded-2xl bg-surface p-4 shadow-sm sm:p-5 " + (isDesktop ? "" : "hidden")}>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Оверлей</h2>
         <label className="block py-1">
           <div className="mb-1 flex justify-between text-sm">

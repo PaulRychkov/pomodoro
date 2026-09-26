@@ -60,18 +60,34 @@ export default function PlanToday({ version, blocks, activeIdx, focusing, defaul
     return null;
   }
 
-  const groups: { bi: number; slots: PlanSlot[] }[] = [];
+  const committed = plan.filter((s) => !s.overflow);
+  const overflow = plan.filter((s) => s.overflow);
+
+  const sections: { key: string; title: string; slots: PlanSlot[]; muted: boolean }[] = [];
   let offset = 0;
-  for (let bi = 0; offset < plan.length; bi++) {
-    const size = bi < blocks.length ? blocks[bi] : plan.length - offset;
-    groups.push({ bi, slots: plan.slice(offset, offset + size) });
+  for (let bi = 0; offset < committed.length; bi++) {
+    const size = bi < blocks.length ? blocks[bi] : committed.length - offset;
+    sections.push({
+      key: `block-${bi}`,
+      title: `Пакет ${bi + 1}`,
+      slots: committed.slice(offset, offset + size),
+      muted: false,
+    });
     offset += size;
+  }
+  if (overflow.length > 0) {
+    sections.push({
+      key: "overflow",
+      title: `Не влезшие помидоры · ${overflow.length}`,
+      slots: overflow,
+      muted: true,
+    });
   }
 
   const slotText = (s: PlanSlot) => s.task?.title_snapshot || s.label || "—";
 
   return (
-    <div className="rounded-2xl bg-surface p-5 shadow-sm">
+    <div className="rounded-2xl bg-surface p-3 shadow-sm sm:p-5">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">План помидоров</h2>
         <button
@@ -84,9 +100,9 @@ export default function PlanToday({ version, blocks, activeIdx, focusing, defaul
         </button>
       </div>
       <div className="flex flex-col gap-3">
-        {groups.map(({ bi, slots }) => (
-          <div key={bi}>
-            <p className="mb-1 text-xs text-muted">Пакет {bi + 1}</p>
+        {sections.map(({ key, title, slots, muted }) => (
+          <div key={key}>
+            <p className={"mb-1 text-xs " + (muted ? "font-medium text-amber-600" : "text-muted")}>{title}</p>
             <div className="flex flex-col gap-1">
               {slots.map((s) => {
                 const isActive = s.idx === activeIdx;
@@ -96,6 +112,7 @@ export default function PlanToday({ version, blocks, activeIdx, focusing, defaul
                     className={
                       "flex items-center gap-1.5 rounded-lg px-1 py-0.5 " +
                       (s.done ? "opacity-45 " : "") +
+                      (muted ? "opacity-70 " : "") +
                       (isActive ? "bg-primary/10 ring-1 ring-primary/40" : "")
                     }
                   >
@@ -106,6 +123,11 @@ export default function PlanToday({ version, blocks, activeIdx, focusing, defaul
                       }
                     >
                       {isActive ? (focusing ? "▶" : "•") : s.idx + 1}
+                    </span>
+                    <span className="w-10 shrink-0 text-xs tabular-nums text-muted">
+                      {s.start_minutes == null
+                        ? ""
+                        : `${String(Math.floor(s.start_minutes / 60) % 24).padStart(2, "0")}:${String(s.start_minutes % 60).padStart(2, "0")}`}
                     </span>
                     <div className="relative min-w-0 flex-1">
                       <button

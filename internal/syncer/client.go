@@ -13,13 +13,16 @@ import (
 	"go.uber.org/zap"
 )
 
+const pullOverlap = 15 * time.Minute
+
 type Client struct {
-	Service  *Service
-	BaseURL  string
-	Token    string
-	Interval time.Duration
-	Log      *zap.Logger
-	http     *http.Client
+	Service   *Service
+	BaseURL   string
+	Token     string
+	Interval  time.Duration
+	Log       *zap.Logger
+	AfterPull func(context.Context)
+	http      *http.Client
 }
 
 func NewClient(svc *Service, baseURL, token string, interval time.Duration, log *zap.Logger) *Client {
@@ -96,6 +99,9 @@ func (c *Client) push(ctx context.Context) error {
 
 func (c *Client) pull(ctx context.Context) error {
 	cursor := c.Service.GetState(ctx, "pull_cursor")
+	if !cursor.IsZero() {
+		cursor = cursor.Add(-pullOverlap)
+	}
 	u := c.BaseURL + "/api/v1/sync/changes?since=" + url.QueryEscape(cursor.UTC().Format(time.RFC3339Nano))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -127,6 +133,9 @@ func (c *Client) pull(ctx context.Context) error {
 	c.Service.SetState(ctx, "pull_cursor", changes.ServerTime)
 	if res.Upserted > 0 || res.Deleted > 0 {
 		c.Log.Info("sync pull ok", zap.Int("upserted", res.Upserted), zap.Int("deleted", res.Deleted))
+		if c.AfterPull != nil {
+			c.AfterPull(ctx)
+		}
 	}
 	return nil
 }

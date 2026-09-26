@@ -47,6 +47,7 @@ export namespace engine {
 	    label?: string;
 	    task?: models.TaskRef;
 	    completed_today: number;
+	    credit_today: number;
 	    day_blocks: number[];
 	    block_index: number;
 	    pos_in_block: number;
@@ -54,6 +55,7 @@ export namespace engine {
 	    day_total: number;
 	    day_complete: boolean;
 	    sound_enabled: boolean;
+	    settings_stamp: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new State(source);
@@ -73,6 +75,7 @@ export namespace engine {
 	        this.label = source["label"];
 	        this.task = this.convertValues(source["task"], models.TaskRef);
 	        this.completed_today = source["completed_today"];
+	        this.credit_today = source["credit_today"];
 	        this.day_blocks = source["day_blocks"];
 	        this.block_index = source["block_index"];
 	        this.pos_in_block = source["pos_in_block"];
@@ -80,6 +83,7 @@ export namespace engine {
 	        this.day_total = source["day_total"];
 	        this.day_complete = source["day_complete"];
 	        this.sound_enabled = source["sound_enabled"];
+	        this.settings_stamp = source["settings_stamp"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -247,8 +251,12 @@ export namespace models {
 	    task_title_snapshot?: string;
 	    // Go type: time
 	    relabeled_at?: any;
+	    focus_seconds?: number;
+	    credit_twelfths?: number;
 	    // Go type: time
 	    created_at: any;
+	    // Go type: time
+	    updated_at: any;
 	
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
@@ -269,7 +277,10 @@ export namespace models {
 	        this.task_external_id = source["task_external_id"];
 	        this.task_title_snapshot = source["task_title_snapshot"];
 	        this.relabeled_at = this.convertValues(source["relabeled_at"], null);
+	        this.focus_seconds = source["focus_seconds"];
+	        this.credit_twelfths = source["credit_twelfths"];
 	        this.created_at = this.convertValues(source["created_at"], null);
+	        this.updated_at = this.convertValues(source["updated_at"], null);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -425,8 +436,10 @@ export namespace plan {
 	    label?: string;
 	    focus_minutes?: number;
 	    break_minutes?: number;
+	    start_minutes?: number;
 	    pinned: boolean;
 	    done: boolean;
+	    overflow: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new SlotView(source);
@@ -439,8 +452,10 @@ export namespace plan {
 	        this.label = source["label"];
 	        this.focus_minutes = source["focus_minutes"];
 	        this.break_minutes = source["break_minutes"];
+	        this.start_minutes = source["start_minutes"];
 	        this.pinned = source["pinned"];
 	        this.done = source["done"];
+	        this.overflow = source["overflow"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

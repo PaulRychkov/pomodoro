@@ -67,7 +67,7 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.engine.SetNotifier(func(st engine.State, reason string) {
 		runtime.EventsEmit(a.ctx, "pomodoro:state", StatePush{State: st, Reason: reason})
-		if reason == "completed" {
+		if reason == "completed" && st.NextPhase != engine.PhaseFocus {
 			go func() {
 				taskID, closed, err := a.plan.HandleFocusCompleted(context.Background())
 				if err != nil {
@@ -143,7 +143,20 @@ func (a *App) initBackend() error {
 		syncSvc := &syncer.Service{DB: db, Log: a.log}
 		h.WithSync(syncSvc, a.cfg.SyncToken)
 		if a.cfg.SyncURL != "" {
-			go syncer.NewClient(syncSvc, a.cfg.SyncURL, a.cfg.SyncToken, a.cfg.SyncInterval, a.log).Run(backendCtx)
+			cl := syncer.NewClient(syncSvc, a.cfg.SyncURL, a.cfg.SyncToken, a.cfg.SyncInterval, a.log)
+			cl.AfterPull = func(c context.Context) {
+				changed, err := eng.ReloadSettings(c)
+				if err != nil {
+					a.log.Warn("перечитывание настроек после синхронизации", zap.Error(err))
+					return
+				}
+				if changed {
+					if _, err := a.plan.Day(c, true); err != nil {
+						a.log.Warn("пересборка плана после синхронизации", zap.Error(err))
+					}
+				}
+			}
+			go cl.Run(backendCtx)
 		}
 	}
 	srv := &http.Server{Addr: fmt.Sprintf(":%d", a.cfg.HTTPPort), Handler: h.Router()}

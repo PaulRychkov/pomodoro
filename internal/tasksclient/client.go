@@ -65,6 +65,7 @@ type DueTask struct {
 	Priority     int
 	StartTimeMin *int
 	DurationMin  *int
+	Blocked      bool
 }
 
 func (c *Client) Topics(ctx context.Context) ([]Topic, error) {
@@ -226,10 +227,9 @@ func (c *Client) DueToday(ctx context.Context, now time.Time) ([]DueTask, error)
 		if t.Progress == "completed" || t.Progress == "cancelled" {
 			continue
 		}
-		if t.RequiresPomodoro != nil && !*t.RequiresPomodoro {
-			continue
-		}
-		if t.StartTimeMin != nil && (t.RequiresPomodoro == nil || !*t.RequiresPomodoro) {
+		fixedTime := t.StartTimeMin != nil
+		wantsPomodoro := t.RequiresPomodoro == nil || *t.RequiresPomodoro
+		if !fixedTime && !wantsPomodoro {
 			continue
 		}
 		seen[t.ID] = true
@@ -240,6 +240,7 @@ func (c *Client) DueToday(ctx context.Context, now time.Time) ([]DueTask, error)
 			Priority:     t.Priority,
 			StartTimeMin: t.StartTimeMin,
 			DurationMin:  t.DurationMin,
+			Blocked:      fixedTime && !wantsPomodoro,
 		})
 	}
 	return out, nil

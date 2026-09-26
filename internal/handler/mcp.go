@@ -46,25 +46,27 @@ type startFocusOutput struct {
 }
 
 type stopSessionInput struct {
-	Outcome string `json:"outcome,omitempty" jsonschema:"completed или abandoned; по умолчанию abandoned"`
+	Outcome string `json:"outcome,omitempty" jsonschema:"completed — завершить досрочно с частичным зачётом; abandoned — бросить без зачёта; по умолчанию abandoned"`
 }
 
 type stopSessionOutput struct {
-	Stopped        bool   `json:"stopped"`
-	NextPhase      string `json:"next_phase"`
-	CompletedToday int    `json:"completed_today"`
+	Stopped        bool    `json:"stopped"`
+	NextPhase      string  `json:"next_phase"`
+	CompletedToday int     `json:"completed_today"`
+	CreditToday    float64 `json:"credit_today"`
 }
 
 type todayStatsOutput struct {
-	CompletedToday    int    `json:"completed_today"`
-	DayTotal          int    `json:"day_total"`
-	DayBlocks         []int  `json:"day_blocks"`
-	BlockIndex        int    `json:"block_index"`
-	PosInBlock        int    `json:"pos_in_block"`
-	DayComplete       bool   `json:"day_complete"`
-	FocusSecondsToday int    `json:"focus_seconds_today"`
-	AbandonedToday    int    `json:"abandoned_today"`
-	ActivePhase       string `json:"active_phase"`
+	CompletedToday    int     `json:"completed_today"`
+	CreditToday       float64 `json:"credit_today"`
+	DayTotal          int     `json:"day_total"`
+	DayBlocks         []int   `json:"day_blocks"`
+	BlockIndex        int     `json:"block_index"`
+	PosInBlock        int     `json:"pos_in_block"`
+	DayComplete       bool    `json:"day_complete"`
+	FocusSecondsToday int     `json:"focus_seconds_today"`
+	AbandonedToday    int     `json:"abandoned_today"`
+	ActivePhase       string  `json:"active_phase"`
 }
 
 func (h *Handler) newMCPHandler() http.Handler {
@@ -82,12 +84,12 @@ func (h *Handler) newMCPHandler() http.Handler {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "stop_session",
-		Description: "Остановить активную сессию с исходом completed или abandoned",
+		Description: "Остановить активную сессию. completed до конца таймера — досрочное завершение: засчитывается доля помидора по фактическому фокусу, округлённая до 0, 1/4, 1/3, 1/2, 2/3, 3/4 или 1; доля 0 записывается как брошенный помидор. abandoned — бросить без зачёта",
 	}, h.mcpStopSession)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_today_stats",
-		Description: "Статистика помидоров за сегодня: завершённые, прогресс по блокам дня, фокус-время",
+		Description: "Статистика помидоров за сегодня: completed_today — сколько слотов плана пройдено, credit_today — сумма засчитанных долей помидоров, фокус-время в секундах",
 	}, h.mcpGetTodayStats)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -297,6 +299,7 @@ func (h *Handler) mcpStopSession(ctx context.Context, req *mcp.CallToolRequest, 
 		Stopped:        true,
 		NextPhase:      string(st.NextPhase),
 		CompletedToday: st.CompletedToday,
+		CreditToday:    st.CreditToday,
 	}, nil
 }
 
@@ -313,13 +316,14 @@ func (h *Handler) mcpGetTodayStats(ctx context.Context, req *mcp.CallToolRequest
 		if s.Kind != models.KindFocus || s.EndedAt == nil {
 			continue
 		}
-		focusSeconds += int(s.EndedAt.Sub(s.StartedAt)/time.Second) - s.PausedTotalSeconds
+		focusSeconds += s.ElapsedFocusSeconds()
 		if s.Outcome != nil && *s.Outcome == models.OutcomeAbandoned {
 			abandoned++
 		}
 	}
 	return nil, todayStatsOutput{
 		CompletedToday:    st.CompletedToday,
+		CreditToday:       st.CreditToday,
 		DayTotal:          st.DayTotal,
 		DayBlocks:         st.DayBlocks,
 		BlockIndex:        st.BlockIndex,

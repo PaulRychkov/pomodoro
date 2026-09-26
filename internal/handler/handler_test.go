@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -173,6 +174,30 @@ func TestPauseResumeStop(t *testing.T) {
 }
 
 func TestStopWithOutcomeCompleted(t *testing.T) {
+	e := newEnv(t, func(s *models.Settings) {
+		s.AutoStartBreak = false
+		s.FocusDurationSeconds = 2
+	})
+	w := e.do(t, http.MethodPost, "/api/v1/sessions", map[string]any{})
+	created := decode[struct {
+		Session models.Session `json:"session"`
+	}](t, w)
+
+	time.Sleep(1100 * time.Millisecond)
+	w = e.do(t, http.MethodPost, "/api/v1/sessions/"+created.Session.ID.String()+"/stop",
+		map[string]string{"outcome": "completed"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("stop = %d %s", w.Code, w.Body.String())
+	}
+	resp := decode[struct {
+		State engine.State `json:"state"`
+	}](t, w)
+	if resp.State.CompletedToday != 1 || resp.State.Phase != engine.PhaseIdle || resp.State.CreditToday != 0.5 {
+		t.Fatalf("state = %+v", resp.State)
+	}
+}
+
+func TestStopCompletedRightAwayCountsNothing(t *testing.T) {
 	e := newEnv(t, func(s *models.Settings) { s.AutoStartBreak = false })
 	w := e.do(t, http.MethodPost, "/api/v1/sessions", map[string]any{})
 	created := decode[struct {
@@ -187,8 +212,16 @@ func TestStopWithOutcomeCompleted(t *testing.T) {
 	resp := decode[struct {
 		State engine.State `json:"state"`
 	}](t, w)
-	if resp.State.CompletedToday != 1 || resp.State.Phase != engine.PhaseIdle {
-		t.Fatalf("state = %+v", resp.State)
+	if resp.State.CompletedToday != 0 || resp.State.CreditToday != 0 {
+		t.Fatalf("мгновенное завершение не засчитывается: %+v", resp.State)
+	}
+	w = e.do(t, http.MethodGet, "/api/v1/sessions", nil)
+	list := decode[struct {
+		Sessions []models.Session `json:"sessions"`
+	}](t, w)
+	if len(list.Sessions) != 1 || *list.Sessions[0].Outcome != models.OutcomeAbandoned ||
+		list.Sessions[0].CreditTwelfths == nil || *list.Sessions[0].CreditTwelfths != 0 || list.Sessions[0].FocusSeconds == nil {
+		t.Fatalf("сессия должна остаться с точным временем и нулевым зачётом: %+v", list.Sessions)
 	}
 }
 

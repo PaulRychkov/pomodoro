@@ -20,6 +20,12 @@ func finishedEvent(eventType string, s *models.Session) *models.OutboxEvent {
 		payload["actual_seconds"] = int(s.EndedAt.Sub(s.StartedAt) / time.Second)
 	}
 	payload["paused_total_seconds"] = s.PausedTotalSeconds
+	if s.Kind == models.KindFocus && s.EndedAt != nil {
+		credit := s.Credit()
+		payload["focus_seconds"] = s.ElapsedFocusSeconds()
+		payload["credit"] = models.CreditLabel(credit)
+		payload["credit_value"] = float64(credit) / float64(models.FullCreditTwelfths)
+	}
 	return newEvent(eventType, s.ID, payload)
 }
 

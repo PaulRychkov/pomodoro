@@ -87,7 +87,7 @@ export default function TaskTreePicker({ tree, currentLabel, onPick, onClose }: 
   return (
     <div
       ref={ref}
-      className="absolute left-0 top-full z-30 mt-1 max-h-80 w-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl"
+      className="absolute left-0 top-full z-30 mt-1 max-h-80 w-72 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl"
     >
       <div className="mb-1 flex items-center justify-between px-1">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">Что делаю</span>

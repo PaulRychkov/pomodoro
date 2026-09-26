@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Coffee, Minus, Pause, PictureInPicture2, Play, Settings as SettingsIcon, Square, Timer, X } from "lucide-react";
-import { api, onModeChange, onStatePush, playChime } from "./api";
+import { CheckCheck, Coffee, Minus, Pause, PictureInPicture2, Play, RefreshCw, Settings as SettingsIcon, Square, Timer, X } from "lucide-react";
+import { api, isDesktop, onModeChange, onStatePush, playChime } from "./api";
+import { creditLabel, creditTwelfths, formatCreditSum } from "./credit";
 import TimerRing from "./components/TimerRing";
 import DayProgress from "./components/DayProgress";
 import SessionsToday from "./components/SessionsToday";
@@ -61,6 +62,8 @@ function useCountdown(state: State | null): number {
   return remaining;
 }
 
+const androidHost = (window as unknown as { AndroidHost?: { openSync: () => void } }).AndroidHost
+
 export default function App() {
   const [state, setState] = useState<State | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -71,6 +74,7 @@ export default function App() {
   const [sessionsVersion, setSessionsVersion] = useState(0);
   const settingsRef = useRef<Settings | null>(null);
   settingsRef.current = settings;
+  const stampRef = useRef<string>("");
 
   const remaining = useCountdown(state);
 
@@ -81,6 +85,14 @@ export default function App() {
     const subscribe = () => {
       offState = onStatePush((push) => {
         setState(push.state);
+        if (push.state.settings_stamp && push.state.settings_stamp !== stampRef.current) {
+          const first = stampRef.current === "";
+          stampRef.current = push.state.settings_stamp;
+          if (!first) {
+            api.getSettings().then(setSettings).catch(() => undefined);
+            setSessionsVersion((v) => v + 1);
+          }
+        }
         if (push.reason === "completed" || push.reason === "stopped" || push.reason === "relabeled" || push.reason === "started") {
           setSessionsVersion((v) => v + 1);
         }
@@ -89,6 +101,7 @@ export default function App() {
         }
         if (push.reason === "settings") {
           api.getSettings().then(setSettings).catch(() => undefined);
+          setSessionsVersion((v) => v + 1);
         }
       });
       offMode = onModeChange((m) => {
@@ -101,6 +114,7 @@ export default function App() {
         .then(() => Promise.all([api.getState(), api.getSettings()]))
         .then(([st, se]) => {
           if (cancelled) return;
+          stampRef.current = st.settings_stamp ?? "";
           subscribe();
           setState(st);
           setSettings(se);
@@ -168,13 +182,15 @@ export default function App() {
   const active = state.phase !== "idle";
   const isBreak = state.phase === "short_break" || state.phase === "long_break";
   const fraction = active && state.planned_seconds > 0 ? remaining / state.planned_seconds : 1;
+  const focusing = state.phase === "focus";
+  const earnedNow = focusing ? creditTwelfths(state.planned_seconds - remaining, state.planned_seconds) : 0;
 
   return (
     <div className="flex h-screen flex-col">
-      <header className="draggable flex select-none items-center gap-3 border-b border-slate-200 bg-surface px-4 py-2">
-        <Timer size={18} className="text-primary" />
-        <span className="text-sm font-semibold">Pomodoro</span>
-        <nav className="no-drag ml-6 flex gap-1">
+      <header className="draggable flex select-none items-center gap-2 border-b border-slate-200 bg-surface px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))] sm:gap-3 sm:px-4">
+        <Timer size={18} className="shrink-0 text-primary" />
+        <span className="hidden text-sm font-semibold sm:inline">Pomodoro</span>
+        <nav className="no-drag flex gap-1 sm:ml-6">
           <button
             className={
               "rounded-lg px-3 py-1 text-sm " +
@@ -194,27 +210,44 @@ export default function App() {
             <SettingsIcon size={14} /> Настройки
           </button>
         </nav>
-        <div className="no-drag ml-auto flex items-center gap-1">
-          <button className="rounded-lg p-1.5 text-muted hover:bg-canvas" onClick={() => void api.minimise()}>
-            <Minus size={16} />
+        {androidHost && (
+          <button
+            className="no-drag ml-auto rounded-lg p-1.5 text-muted hover:bg-canvas"
+            title="Синхронизация"
+            onClick={() => androidHost.openSync()}
+          >
+            <RefreshCw size={16} />
           </button>
-          <button className="rounded-lg p-1.5 text-muted hover:bg-danger hover:text-white" onClick={() => void api.quit()}>
-            <X size={16} />
-          </button>
-        </div>
+        )}
+        {isDesktop && (
+          <div className="no-drag ml-auto flex items-center gap-1">
+            <button className="rounded-lg p-1.5 text-muted hover:bg-canvas" onClick={() => void api.minimise()}>
+              <Minus size={16} />
+            </button>
+            <button className="rounded-lg p-1.5 text-muted hover:bg-danger hover:text-white" onClick={() => void api.quit()}>
+              <X size={16} />
+            </button>
+          </div>
+        )}
       </header>
 
-      <main className="flex-1 overflow-y-auto p-6">
+      <main className="flex-1 overflow-y-auto p-3 sm:p-6">
         {error && (
           <div className="mx-auto mb-4 max-w-3xl rounded-xl bg-danger/10 px-4 py-2 text-sm text-danger">{error}</div>
         )}
         {view === "settings" ? (
           <div className="mx-auto max-w-3xl">
-            <SettingsView settings={settings} onSaved={setSettings} />
+            <SettingsView
+              settings={settings}
+              onSaved={(s) => {
+                setSettings(s);
+                setSessionsVersion((v) => v + 1);
+              }}
+            />
           </div>
         ) : (
-          <div className="mx-auto grid max-w-4xl grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-            <div className="flex flex-col items-center gap-5 rounded-2xl bg-surface p-8 shadow-sm">
+          <div className="mx-auto grid max-w-4xl grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="flex flex-col items-center gap-4 rounded-2xl bg-surface p-4 shadow-sm sm:gap-5 sm:p-8">
               <p className="text-sm font-medium text-muted">{phaseTitle(state)}</p>
               {(() => {
                 const focusing = state.phase === "focus";
@@ -230,20 +263,20 @@ export default function App() {
                   return <p className="text-lg font-semibold text-slate-400">Свободный помидор</p>;
                 }
                 return (
-                  <div className="text-center">
+                  <div className="w-full min-w-0 text-center">
                     <p className="text-[11px] uppercase tracking-wide text-muted">{focusing ? "Сейчас" : "Следующее"}</p>
-                    <p className="max-w-md truncate text-xl font-semibold text-ink">{nowTitle}</p>
+                    <p className="mx-auto max-w-full truncate px-2 text-xl font-semibold text-ink">{nowTitle}</p>
                   </div>
                 );
               })()}
-              <TimerRing size={260} stroke={14} fraction={fraction} color={isBreak ? "#5DC9E2" : "#00ADD8"}>
-                <span className="text-6xl font-semibold tabular-nums tracking-tight">
+              <TimerRing responsive size={260} stroke={14} fraction={fraction} color={isBreak ? "#5DC9E2" : "#00ADD8"}>
+                <span className="text-[clamp(2.25rem,16vw,3.75rem)] font-semibold tabular-nums tracking-tight">
                   {active ? fmt(remaining) : fmt(state.next_phase === "focus" ? settings.focus_duration_seconds : state.next_phase === "long_break" ? settings.long_break_seconds : settings.short_break_seconds)}
                 </span>
                 {state.paused && <span className="mt-1 text-sm font-medium text-muted">пауза</span>}
               </TimerRing>
 
-              <div className="flex items-center gap-3">
+              <div className="flex w-full flex-wrap items-center justify-center gap-2 sm:gap-3">
                 {!active ? (
                   <>
                     <button
@@ -268,26 +301,45 @@ export default function App() {
                       {state.paused ? <Play size={18} /> : <Pause size={18} />}
                       {state.paused ? "Продолжить" : "Пауза"}
                     </button>
+                    {focusing && (
+                      <button
+                        className="flex items-center gap-2 rounded-xl border border-primary/50 px-5 py-3 text-sm text-primary-dark hover:bg-primary hover:text-white"
+                        title="Закончить помидор сейчас: засчитается доля по фактическому фокусу"
+                        onClick={() => run(api.stop("completed"))}
+                      >
+                        <CheckCheck size={16} /> Завершить
+                      </button>
+                    )}
                     <button
                       className="flex items-center gap-2 rounded-xl border border-danger/40 px-5 py-3 text-sm text-danger hover:bg-danger hover:text-white"
+                      title={focusing ? "Бросить помидор без зачёта" : "Закончить перерыв"}
                       onClick={() => run(api.stop(""))}
                     >
                       <Square size={16} /> Стоп
                     </button>
-                    <button
-                      className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm text-muted hover:border-primary hover:text-primary-dark"
-                      title="Свернуть в оверлей поверх всех окон"
-                      onClick={() => run(api.enterOverlay())}
-                    >
-                      <PictureInPicture2 size={16} /> Оверлей
-                    </button>
+                    {isDesktop && (
+                      <button
+                        className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm text-muted hover:border-primary hover:text-primary-dark"
+                        title="Свернуть в оверлей поверх всех окон"
+                        onClick={() => run(api.enterOverlay())}
+                      >
+                        <PictureInPicture2 size={16} /> Оверлей
+                      </button>
+                    )}
                   </>
                 )}
               </div>
+              {focusing && !state.paused && (
+                <p className="-mt-2 text-xs text-muted">
+                  Завершить сейчас — засчитается {creditLabel(earnedNow)}
+                  {earnedNow === 0 ? " (помидор не засчитается)" : " помидора"}
+                </p>
+              )}
 
               <div className="w-full border-t border-slate-100 pt-5">
                 <p className="mb-3 text-center text-xs text-muted">
                   Сегодня: {state.completed_today} из {state.day_total}
+                  {state.credit_today !== state.completed_today && ` · засчитано ${formatCreditSum(state.credit_today)}`}
                   {state.day_complete && " — план дня выполнен!"}
                 </p>
                 <DayProgress blocks={state.day_blocks} completed={state.completed_today} focusActive={state.phase === "focus"} />

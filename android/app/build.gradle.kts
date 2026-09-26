@@ -11,6 +11,13 @@ val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) FileInputStream(keystorePropsFile).use { load(it) }
 }
 
+val versionPropsFile = rootProject.file("version.properties")
+val versionProps = Properties().apply {
+    if (versionPropsFile.exists()) FileInputStream(versionPropsFile).use { load(it) }
+}
+val buildNumber = (versionProps.getProperty("build") ?: "1").trim().toInt()
+val datedVersionCodeCeiling = 26072921
+
 android {
     namespace = "dev.rychkov.pomodoro"
     compileSdk = 36
@@ -19,8 +26,8 @@ android {
         applicationId = "dev.rychkov.pomodoro"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = datedVersionCodeCeiling + buildNumber
+        versionName = "1.0.$buildNumber"
     }
 
     signingConfigs {

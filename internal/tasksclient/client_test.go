@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func newServer(t *testing.T, status int, body string) *httptest.Server {
@@ -57,6 +58,41 @@ func TestSearchFiltersAndMaps(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDueTodayMarksFixedEventsWithoutPomodoros(t *testing.T) {
+	body := `[
+		{"id":"o1","task_id":"job","task":{"id":"job","title":"Поиск работы","progress":"needs_action","effort_minutes":690,"requires_pomodoro":true}},
+		{"id":"o2","task_id":"work","task":{"id":"work","title":"Работа","progress":"needs_action","start_time_minutes":540,"estimated_duration_minutes":240,"requires_pomodoro":true}},
+		{"id":"o3","task_id":"gym","task":{"id":"gym","title":"Зал","progress":"needs_action","start_time_minutes":420,"estimated_duration_minutes":40,"requires_pomodoro":false}},
+		{"id":"o4","task_id":"read","task":{"id":"read","title":"Почитать когда-нибудь","progress":"needs_action","requires_pomodoro":false}}
+	]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/occurrences" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+
+	got, err := New(srv.URL, "tasks").DueToday(context.Background(), time.Now())
+	if err != nil {
+		t.Fatalf("due today: %v", err)
+	}
+	blocked := map[string]bool{}
+	for _, d := range got {
+		blocked[d.Option.ExternalID] = d.Blocked
+	}
+	if len(got) != 3 {
+		t.Fatalf("гибкая задача без помидоров в план не идёт: %+v", blocked)
+	}
+	if blocked["job"] || blocked["work"] {
+		t.Fatalf("задачи с помидорами не блокируют время: %+v", blocked)
+	}
+	if !blocked["gym"] {
+		t.Fatalf("событие с фиксированным временем без помидоров обязано блокировать время: %+v", blocked)
 	}
 }
 

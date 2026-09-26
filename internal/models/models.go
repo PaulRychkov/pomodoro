@@ -140,11 +140,86 @@ type Session struct {
 	TaskExternalID         *string    `json:"task_external_id"`
 	TaskTitleSnapshot      *string    `json:"task_title_snapshot"`
 	RelabeledAt            *time.Time `json:"relabeled_at"`
+	FocusSeconds           *int       `json:"focus_seconds"`
+	CreditTwelfths         *int       `json:"credit_twelfths"`
 	CreatedAt              time.Time  `json:"created_at"`
 	UpdatedAt              time.Time  `json:"updated_at"`
 }
 
 func (Session) TableName() string { return "sessions" }
+
+const FullCreditTwelfths = 12
+
+var creditSteps = []int{0, 3, 4, 6, 8, 9, 12}
+
+func CreditTwelfthsFor(focusSeconds, plannedSeconds int) int {
+	if plannedSeconds <= 0 || focusSeconds <= 0 {
+		return 0
+	}
+	if focusSeconds >= plannedSeconds {
+		return FullCreditTwelfths
+	}
+	best := creditSteps[0]
+	bestDist := -1
+	for _, step := range creditSteps {
+		dist := abs(focusSeconds*FullCreditTwelfths - step*plannedSeconds)
+		if bestDist < 0 || dist <= bestDist {
+			best, bestDist = step, dist
+		}
+	}
+	return best
+}
+
+func CreditLabel(twelfths int) string {
+	switch twelfths {
+	case 0:
+		return "0"
+	case 3:
+		return "1/4"
+	case 4:
+		return "1/3"
+	case 6:
+		return "1/2"
+	case 8:
+		return "2/3"
+	case 9:
+		return "3/4"
+	case FullCreditTwelfths:
+		return "1"
+	}
+	return fmt.Sprintf("%d/12", twelfths)
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func (s Session) ElapsedFocusSeconds() int {
+	if s.FocusSeconds != nil {
+		return *s.FocusSeconds
+	}
+	if s.EndedAt == nil {
+		return 0
+	}
+	sec := int(s.EndedAt.Sub(s.StartedAt)/time.Second) - s.PausedTotalSeconds
+	if sec < 0 {
+		return 0
+	}
+	return sec
+}
+
+func (s Session) Credit() int {
+	if s.CreditTwelfths != nil {
+		return *s.CreditTwelfths
+	}
+	if s.Kind == KindFocus && s.Outcome != nil && *s.Outcome == OutcomeCompleted {
+		return FullCreditTwelfths
+	}
+	return 0
+}
 
 func (s Session) RemainingSeconds(now time.Time) int {
 	if s.EndedAt != nil {
@@ -191,7 +266,7 @@ func DefaultSettings() Settings {
 		PlanBeforeWindowMin:  80,
 		PlanAfterWindowMin:   90,
 		WindowSharePercent:   67,
-		AutoStartBreak:       true,
+		AutoStartBreak:       false,
 		AutoStartFocus:       false,
 		SoundEnabled:         true,
 		Overlay:              DefaultOverlay(),

@@ -1,21 +1,36 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 
-$env:JAVA_HOME = "C:\Users\pavel\android-tools\jdk-extract\jdk-21.0.11+10"
-$env:ANDROID_HOME = "C:\Users\pavel\android-tools\sdk"
-$env:ANDROID_NDK_HOME = "C:\Users\pavel\android-tools\sdk\ndk\30.0.15729638"
-$env:PATH = "$env:JAVA_HOME\bin;C:\Users\pavel\go\bin;$env:PATH"
+$tools = "$env:USERPROFILE\android-tools"
+$env:JAVA_HOME = (Get-ChildItem "$tools\jdk-extract" -Directory | Sort-Object Name -Descending | Select-Object -First 1).FullName
+$env:ANDROID_HOME = "$tools\sdk"
+$env:ANDROID_NDK_HOME = (Get-ChildItem "$tools\sdk\ndk" -Directory | Sort-Object Name -Descending | Select-Object -First 1).FullName
+$env:PATH = "$env:JAVA_HOME\bin;$env:USERPROFILE\go\bin;$env:PATH"
 $env:GOFLAGS = "-p=1"
-$gradle = "C:\Users\pavel\android-tools\gradle-8.11.1\bin\gradle.bat"
+$gradle = (Get-ChildItem "$tools\gradle-*\bin\gradle.bat" | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+foreach ($p in @($env:JAVA_HOME, $env:ANDROID_NDK_HOME, $gradle)) {
+    if (-not $p -or -not (Test-Path $p)) { throw "не найдено в $tools — поставь android-окружение" }
+}
+
+$versionFile = "$repo\android\version.properties"
+$buildNumber = 1
+if (Test-Path $versionFile) {
+    $current = (Select-String -Path $versionFile -Pattern '^build=(\d+)').Matches.Groups[1].Value
+    if ($current) { $buildNumber = [int]$current + 1 }
+}
+Set-Content -Path $versionFile -Value "build=$buildNumber" -Encoding ascii
+$version = "1.0.$buildNumber"
+Write-Host "== версия $version =="
 
 Write-Host "== frontend =="
 Push-Location "$repo\frontend"
 npm run build
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw "npm run build failed" }
 Pop-Location
 
 Write-Host "== webdist =="
 $webdist = "$repo\mobile\webdist"
-Remove-Item "$webdist\*" -Recurse -Force -ErrorAction SilentlyContinue
+Get-ChildItem $webdist -Force | Where-Object { $_.Name -ne '.gitignore' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 Copy-Item "$repo\frontend\dist\*" $webdist -Recurse -Force
 
 Write-Host "== gomobile bind =="
@@ -29,4 +44,8 @@ Write-Host "== gradle =="
 & $gradle -p "$repo\android" assembleRelease
 if ($LASTEXITCODE -ne 0) { throw "gradle failed" }
 
-Write-Host "APK: $repo\android\app\build\outputs\apk\release\app-release.apk"
+$built = "$repo\android\app\build\outputs\apk\release\app-release.apk"
+$target = Join-Path ([Environment]::GetFolderPath('Desktop')) "Помидор $version.apk"
+Get-ChildItem ([Environment]::GetFolderPath('Desktop')) -Filter 'Помидор *.apk' | Remove-Item -Force
+Copy-Item $built $target -Force
+Write-Host "APK: $target"

@@ -404,6 +404,103 @@ func TestStopWithCompletedOutcomeCountsPomodoro(t *testing.T) {
 	}
 }
 
+func TestEarlyFinishCreditsNearestFraction(t *testing.T) {
+	cases := []struct {
+		name        string
+		focus       time.Duration
+		pause       time.Duration
+		wantCredit  int
+		wantOutcome string
+		wantDone    int
+	}{
+		{"почти до конца", 24 * time.Minute, 0, 12, models.OutcomeCompleted, 1},
+		{"три четверти", 20 * time.Minute, 0, 9, models.OutcomeCompleted, 1},
+		{"две трети", 17 * time.Minute, 0, 8, models.OutcomeCompleted, 1},
+		{"половина", 13 * time.Minute, 0, 6, models.OutcomeCompleted, 1},
+		{"треть", 9 * time.Minute, 0, 4, models.OutcomeCompleted, 1},
+		{"четверть", 7 * time.Minute, 0, 3, models.OutcomeCompleted, 1},
+		{"пауза не засчитывается", 15 * time.Minute, 5 * time.Minute, 8, models.OutcomeCompleted, 1},
+		{"ноль", 2 * time.Minute, 0, 0, models.OutcomeAbandoned, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e, mem, clock := newTestEngine(t, func(s *models.Settings) { s.AutoStartBreak = false })
+			if _, err := e.StartFocus(context.Background(), Binding{}); err != nil {
+				t.Fatalf("start: %v", err)
+			}
+			if tc.pause > 0 {
+				clock.Advance(tc.focus / 2)
+				if _, err := e.Pause(context.Background()); err != nil {
+					t.Fatalf("pause: %v", err)
+				}
+				clock.Advance(tc.pause)
+				if _, err := e.Resume(context.Background()); err != nil {
+					t.Fatalf("resume: %v", err)
+				}
+				clock.Advance(tc.focus - tc.focus/2)
+			} else {
+				clock.Advance(tc.focus)
+			}
+			st, err := e.Stop(context.Background(), models.OutcomeCompleted)
+			if err != nil {
+				t.Fatalf("stop: %v", err)
+			}
+			s := mem.AllSessions()[0]
+			if *s.Outcome != tc.wantOutcome {
+				t.Fatalf("outcome = %s, ожидался %s", *s.Outcome, tc.wantOutcome)
+			}
+			if s.CreditTwelfths == nil || *s.CreditTwelfths != tc.wantCredit {
+				t.Fatalf("зачёт = %v двенадцатых, ожидалось %d", s.CreditTwelfths, tc.wantCredit)
+			}
+			if s.FocusSeconds == nil || *s.FocusSeconds != int(tc.focus/time.Second) {
+				t.Fatalf("фокус = %v с, ожидалось %d", s.FocusSeconds, int(tc.focus/time.Second))
+			}
+			if st.CompletedToday != tc.wantDone {
+				t.Fatalf("completed_today = %d, ожидалось %d", st.CompletedToday, tc.wantDone)
+			}
+			wantDay := float64(tc.wantCredit*100/12) / 100
+			if st.CreditToday != wantDay {
+				t.Fatalf("credit_today = %v, ожидалось %v", st.CreditToday, wantDay)
+			}
+		})
+	}
+}
+
+func TestNaturalCompletionGivesFullCreditAndDaySum(t *testing.T) {
+	e, mem, clock := newTestEngine(t, func(s *models.Settings) { s.AutoStartBreak = false })
+	if _, err := e.StartFocus(context.Background(), Binding{}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	clock.Advance(25*time.Minute + time.Second)
+	if err := e.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if _, err := e.StartFocus(context.Background(), Binding{}); err != nil {
+		t.Fatalf("start second: %v", err)
+	}
+	clock.Advance(19 * time.Minute)
+	st, err := e.Stop(context.Background(), models.OutcomeCompleted)
+	if err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	if st.CompletedToday != 2 || st.CreditToday != 1.75 {
+		t.Fatalf("completed=%d credit=%v, ожидалось 2 и 1.75", st.CompletedToday, st.CreditToday)
+	}
+	for _, s := range mem.AllSessions() {
+		if s.StartedAt.Equal(newFakeClock().now) && (s.CreditTwelfths == nil || *s.CreditTwelfths != 12 || *s.FocusSeconds != 1500) {
+			t.Fatalf("полный помидор: зачёт %v, фокус %v", s.CreditTwelfths, s.FocusSeconds)
+		}
+	}
+
+	e2 := New(mem, clock)
+	if err := e2.Init(context.Background()); err != nil {
+		t.Fatalf("reinit: %v", err)
+	}
+	if got := e2.Snapshot().CreditToday; got != 1.75 {
+		t.Fatalf("после перезапуска сумма дня %v, ожидалось 1.75", got)
+	}
+}
+
 func TestStopRejectsUnknownOutcome(t *testing.T) {
 	e, _, _ := newTestEngine(t, nil)
 	if _, err := e.StartFocus(context.Background(), Binding{}); err != nil {
@@ -637,7 +734,16 @@ func TestValidateSettings(t *testing.T) {
 		{"empty blocks", func(s *models.Settings) { s.DayBlocks = models.IntList{} }, true},
 		{"zero block", func(s *models.Settings) { s.DayBlocks = models.IntList{4, 0} }, true},
 		{"too big block", func(s *models.Settings) { s.DayBlocks = models.IntList{17} }, true},
-		{"too many blocks", func(s *models.Settings) { s.DayBlocks = models.IntList{1, 1, 1, 1, 1, 1, 1, 1, 1} }, true},
+		{"too many blocks", func(s *models.Settings) {
+			blocks := make(models.IntList, 25)
+			for i := range blocks {
+				blocks[i] = 1
+			}
+			s.DayBlocks = blocks
+		}, true},
+		{"nine blocks ok", func(s *models.Settings) {
+			s.DayBlocks = models.IntList{3, 3, 3, 3, 3, 3, 3, 3, 1}
+		}, false},
 		{"single block ok", func(s *models.Settings) { s.DayBlocks = models.IntList{6} }, false},
 		{"overlay too small", func(s *models.Settings) { s.Overlay.Size = 40 }, true},
 		{"overlay circle opacity high", func(s *models.Settings) { s.Overlay.CircleOpacity = 1.5 }, true},

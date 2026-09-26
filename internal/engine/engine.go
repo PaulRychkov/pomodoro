@@ -76,6 +76,7 @@ type State struct {
 	Label            *string         `json:"label"`
 	Task             *models.TaskRef `json:"task"`
 	CompletedToday   int             `json:"completed_today"`
+	CreditToday      float64         `json:"credit_today"`
 	DayBlocks        []int           `json:"day_blocks"`
 	BlockIndex       int             `json:"block_index"`
 	PosInBlock       int             `json:"pos_in_block"`
@@ -83,6 +84,7 @@ type State struct {
 	DayTotal         int             `json:"day_total"`
 	DayComplete      bool            `json:"day_complete"`
 	SoundEnabled     bool            `json:"sound_enabled"`
+	SettingsStamp    string          `json:"settings_stamp"`
 }
 
 type Notifier func(state State, reason string)
@@ -99,6 +101,7 @@ type Engine struct {
 	active         *models.Session
 	nextPhase      Phase
 	completedToday int
+	creditToday    int
 	dayKey         string
 	lastBinding    Binding
 }
@@ -154,9 +157,50 @@ func (e *Engine) Init(ctx context.Context) error {
 	if last != nil && last.Kind == models.KindFocus &&
 		last.Outcome != nil && *last.Outcome == models.OutcomeCompleted &&
 		sameLocalDay(last.StartedAt, now) && e.completedToday > 0 {
-		e.nextPhase = breakPhaseAfter(e.settings.DayBlocks, e.completedToday)
+		e.nextPhase = e.breakPhaseForLocked(e.completedToday)
 	}
 	return nil
+}
+
+func (e *Engine) breakPhaseForLocked(completed int) Phase {
+	if e.durations != nil && completed > 0 {
+		if _, br := e.durations(completed - 1); br != nil && *br > 0 && e.settings.LongBreakSeconds > 0 {
+			if *br >= e.settings.LongBreakSeconds {
+				return PhaseLongBreak
+			}
+			return PhaseShortBreak
+		}
+	}
+	return breakPhaseAfter(e.settings.DayBlocks, completed)
+}
+
+func settleFocus(s *models.Session, endAt time.Time) {
+	if s.PausedAt != nil {
+		s.PausedTotalSeconds += int(endAt.Sub(*s.PausedAt) / time.Second)
+		s.PausedAt = nil
+	}
+	if endAt.Before(s.StartedAt) {
+		endAt = s.StartedAt
+	}
+	s.EndedAt = &endAt
+	if s.Kind != models.KindFocus {
+		return
+	}
+	focus := int(endAt.Sub(s.StartedAt)/time.Second) - s.PausedTotalSeconds
+	if focus < 0 {
+		focus = 0
+	}
+	if focus > s.PlannedDurationSeconds && s.PlannedDurationSeconds > 0 {
+		focus = s.PlannedDurationSeconds
+	}
+	s.FocusSeconds = &focus
+}
+
+func withCredit(s *models.Session, twelfths int) {
+	if s.Kind != models.KindFocus {
+		return
+	}
+	s.CreditTwelfths = &twelfths
 }
 
 func (e *Engine) markHangingInterrupted(ctx context.Context) error {
@@ -167,12 +211,8 @@ func (e *Engine) markHangingInterrupted(ctx context.Context) error {
 	now := e.clock.Now()
 	for i := range hanging {
 		s := hanging[i]
-		if s.PausedAt != nil {
-			s.PausedTotalSeconds += int(now.Sub(*s.PausedAt) / time.Second)
-			s.PausedAt = nil
-		}
-		endedAt := now
-		s.EndedAt = &endedAt
+		settleFocus(&s, now)
+		withCredit(&s, 0)
 		outcome := models.OutcomeInterrupted
 		s.Outcome = &outcome
 		err := e.store.InTx(ctx, func(r store.Repos) error {
@@ -436,21 +476,18 @@ func (e *Engine) stopLocked(ctx context.Context, outcome string) (State, error) 
 		return e.snapshotLocked(), ErrNoActiveSession
 	}
 	now := e.clock.Now()
-	if outcome == models.OutcomeCompleted {
+	if outcome != "" && outcome != models.OutcomeAbandoned && outcome != models.OutcomeCompleted {
+		return e.snapshotLocked(), fmt.Errorf("%w: outcome must be abandoned or completed", ErrInvalidInput)
+	}
+	if outcome == models.OutcomeCompleted && !e.earnsNothingLocked(now) {
 		if err := e.completeLocked(ctx, now); err != nil {
 			return e.snapshotLocked(), err
 		}
 		return e.snapshotLocked(), nil
 	}
-	if outcome != "" && outcome != models.OutcomeAbandoned {
-		return e.snapshotLocked(), fmt.Errorf("%w: outcome must be abandoned or completed", ErrInvalidInput)
-	}
 	s := e.active
-	if s.PausedAt != nil {
-		s.PausedTotalSeconds += int(now.Sub(*s.PausedAt) / time.Second)
-		s.PausedAt = nil
-	}
-	s.EndedAt = &now
+	settleFocus(s, now)
+	withCredit(s, 0)
 	oc := models.OutcomeAbandoned
 	s.Outcome = &oc
 	err := e.store.InTx(ctx, func(r store.Repos) error {
@@ -471,19 +508,23 @@ func (e *Engine) stopLocked(ctx context.Context, outcome string) (State, error) 
 	return e.snapshotLocked(), nil
 }
 
+func (e *Engine) earnsNothingLocked(now time.Time) bool {
+	s := e.active
+	if s == nil || s.Kind != models.KindFocus {
+		return false
+	}
+	probe := *s
+	settleFocus(&probe, now)
+	return models.CreditTwelfthsFor(probe.ElapsedFocusSeconds(), probe.PlannedDurationSeconds) == 0
+}
+
 func (e *Engine) completeLocked(ctx context.Context, endAt time.Time) error {
 	s := e.active
 	if s == nil {
 		return ErrNoActiveSession
 	}
-	if s.PausedAt != nil {
-		s.PausedTotalSeconds += int(endAt.Sub(*s.PausedAt) / time.Second)
-		s.PausedAt = nil
-	}
-	if endAt.Before(s.StartedAt) {
-		endAt = s.StartedAt
-	}
-	s.EndedAt = &endAt
+	settleFocus(s, endAt)
+	withCredit(s, models.CreditTwelfthsFor(s.ElapsedFocusSeconds(), s.PlannedDurationSeconds))
 	oc := models.OutcomeCompleted
 	s.Outcome = &oc
 	err := e.store.InTx(ctx, func(r store.Repos) error {
@@ -503,8 +544,9 @@ func (e *Engine) completeLocked(ctx context.Context, endAt time.Time) error {
 	if wasFocus {
 		if localDayKey(s.StartedAt) == e.dayKey {
 			e.completedToday++
+			e.creditToday += s.Credit()
 		}
-		e.nextPhase = breakPhaseAfter(e.settings.DayBlocks, e.completedToday)
+		e.nextPhase = e.breakPhaseForLocked(e.completedToday)
 	} else {
 		e.nextPhase = PhaseFocus
 	}
@@ -580,6 +622,24 @@ func (e *Engine) Settings() models.Settings {
 	return e.settings
 }
 
+func (e *Engine) ReloadSettings(ctx context.Context) (bool, error) {
+	stored, err := e.store.Settings().Get(ctx)
+	if err != nil {
+		return false, fmt.Errorf("load settings: %w", err)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if stored.UpdatedAt.Equal(e.settings.UpdatedAt) {
+		return false, nil
+	}
+	e.settings = stored
+	if e.active == nil && (e.nextPhase == PhaseShortBreak || e.nextPhase == PhaseLongBreak) && e.completedToday > 0 {
+		e.nextPhase = e.breakPhaseForLocked(e.completedToday)
+	}
+	e.notifyLocked("settings")
+	return true, nil
+}
+
 func (e *Engine) UpdateSettings(ctx context.Context, s models.Settings) (models.Settings, error) {
 	s.Overlay.Normalize()
 	if err := ValidateSettings(s); err != nil {
@@ -593,7 +653,7 @@ func (e *Engine) UpdateSettings(ctx context.Context, s models.Settings) (models.
 	}
 	e.settings = s
 	if e.active == nil && (e.nextPhase == PhaseShortBreak || e.nextPhase == PhaseLongBreak) && e.completedToday > 0 {
-		e.nextPhase = breakPhaseAfter(s.DayBlocks, e.completedToday)
+		e.nextPhase = e.breakPhaseForLocked(e.completedToday)
 	}
 	e.notifyLocked("settings")
 	return e.settings, nil
@@ -611,8 +671,8 @@ func ValidateSettings(s models.Settings) error {
 			return fmt.Errorf("%w: each day block must contain 1..16 pomodoros", ErrInvalidInput)
 		}
 	}
-	if len(s.DayBlocks) > 8 {
-		return fmt.Errorf("%w: at most 8 day blocks", ErrInvalidInput)
+	if len(s.DayBlocks) > 24 {
+		return fmt.Errorf("%w: at most 24 day blocks", ErrInvalidInput)
 	}
 	if s.Overlay.Size < 60 || s.Overlay.Size > 600 {
 		return fmt.Errorf("%w: overlay size must be 60..600", ErrInvalidInput)
@@ -638,9 +698,11 @@ func (e *Engine) snapshotLocked() State {
 		Phase:          PhaseIdle,
 		NextPhase:      e.nextPhase,
 		CompletedToday: e.completedToday,
+		CreditToday:    float64(e.creditToday*100/models.FullCreditTwelfths) / 100,
 		DayBlocks:      append([]int{}, e.settings.DayBlocks...),
 		DayTotal:       sum(e.settings.DayBlocks),
 		SoundEnabled:   e.settings.SoundEnabled,
+		SettingsStamp:  e.settings.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	block, pos := blockPos(e.settings.DayBlocks, e.completedToday)
 	st.BlockIndex = block
@@ -679,7 +741,18 @@ func (e *Engine) recountDayLocked(ctx context.Context, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	sessions, err := e.store.Sessions().ListRange(ctx, from, to)
+	if err != nil {
+		return err
+	}
+	credit := 0
+	for _, s := range sessions {
+		if s.Kind == models.KindFocus && s.EndedAt != nil {
+			credit += s.Credit()
+		}
+	}
 	e.completedToday = n
+	e.creditToday = credit
 	e.dayKey = localDayKey(now)
 	if e.active == nil {
 		e.nextPhase = PhaseFocus

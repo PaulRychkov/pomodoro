@@ -288,6 +288,11 @@ func (h *Handler) putSettings(c *gin.Context) {
 		h.writeEngineError(c, err)
 		return
 	}
+	if h.plan != nil {
+		if _, rebuildErr := h.plan.Day(c.Request.Context(), true); rebuildErr != nil {
+			h.log.Warn("пересборка плана после смены настроек", zap.Error(rebuildErr))
+		}
+	}
 	c.JSON(http.StatusOK, saved)
 }
 

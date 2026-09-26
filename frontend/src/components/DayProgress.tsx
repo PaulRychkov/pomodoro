@@ -7,12 +7,12 @@ interface DayProgressProps {
 export default function DayProgress({ blocks, completed, focusActive }: DayProgressProps) {
   let offset = 0;
   return (
-    <div className="flex items-center justify-center gap-8">
+    <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 px-1">
       {blocks.map((size, blockIdx) => {
         const start = offset;
         offset += size;
         return (
-          <div key={blockIdx} className="flex items-center gap-2">
+          <div key={blockIdx} className="flex items-center gap-1.5 sm:gap-2">
             {Array.from({ length: size }, (_, i) => {
               const idx = start + i;
               const done = idx < completed;

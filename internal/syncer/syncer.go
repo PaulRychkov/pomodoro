@@ -16,10 +16,22 @@ import (
 type Changes struct {
 	ServerTime time.Time                 `json:"server_time"`
 	Sessions   []models.Session          `json:"sessions"`
-	Settings   []models.Settings         `json:"settings"`
+	Settings   []SettingsPayload         `json:"settings"`
 	Presets    []models.Preset           `json:"presets"`
 	Schedule   []models.PresetAssignment `json:"schedule"`
 	Tombstones []models.SyncTombstone    `json:"tombstones"`
+}
+
+type SettingsPayload struct {
+	models.Settings
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (p SettingsPayload) settings() models.Settings {
+	s := p.Settings
+	s.ID = 1
+	s.UpdatedAt = p.UpdatedAt
+	return s
 }
 
 type ApplyResult struct {
@@ -39,8 +51,12 @@ func (s *Service) Collect(ctx context.Context, since time.Time) (Changes, error)
 	if err := db.Where("updated_at > ?", since).Order("updated_at").Find(&out.Sessions).Error; err != nil {
 		return out, fmt.Errorf("collect sessions: %w", err)
 	}
-	if err := db.Where("updated_at > ?", since).Find(&out.Settings).Error; err != nil {
+	var settings []models.Settings
+	if err := db.Where("updated_at > ?", since).Find(&settings).Error; err != nil {
 		return out, fmt.Errorf("collect settings: %w", err)
+	}
+	for _, s := range settings {
+		out.Settings = append(out.Settings, SettingsPayload{Settings: s, UpdatedAt: s.UpdatedAt})
 	}
 	if err := db.Where("updated_at > ?", since).Order("updated_at").Find(&out.Presets).Error; err != nil {
 		return out, fmt.Errorf("collect presets: %w", err)
@@ -67,7 +83,7 @@ func (s *Service) Apply(ctx context.Context, in Changes, recordTombstones bool) 
 		s.upsertByID(db, &models.Session{}, in.Sessions[i].ID.String(), in.Sessions[i].UpdatedAt, &in.Sessions[i], &res)
 	}
 	for i := range in.Settings {
-		s.applySettings(db, &in.Settings[i], &res)
+		s.applySettings(db, in.Settings[i].settings(), &res)
 	}
 	for i := range in.Tombstones {
 		s.applyTombstone(db, in.Tombstones[i], recordTombstones, &res)
@@ -121,9 +137,8 @@ func (s *Service) upsertByKey(db *gorm.DB, model any, cond string, key any, inco
 	res.Upserted++
 }
 
-func (s *Service) applySettings(db *gorm.DB, in *models.Settings, res *ApplyResult) {
-	in.ID = 1
-	s.upsertByKey(db, &models.Settings{}, "id = ?", 1, in.UpdatedAt, in, res)
+func (s *Service) applySettings(db *gorm.DB, in models.Settings, res *ApplyResult) {
+	s.upsertByKey(db, &models.Settings{}, "id = ?", 1, in.UpdatedAt, &in, res)
 }
 
 func (s *Service) applyTombstone(db *gorm.DB, ts models.SyncTombstone, record bool, res *ApplyResult) {

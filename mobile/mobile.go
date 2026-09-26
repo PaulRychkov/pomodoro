@@ -87,8 +87,8 @@ func Start(dataDir, tasksURL, syncURL, syncToken string) string {
 		Completed: func() int { return eng.Snapshot().CompletedToday },
 	}
 	eng.SetDurationProvider(planSvc.SlotDurations)
-	eng.SetNotifier(func(_ engine.State, reason string) {
-		if reason == "completed" {
+	eng.SetNotifier(func(st engine.State, reason string) {
+		if reason == "completed" && st.NextPhase != engine.PhaseFocus {
 			go func() {
 				if _, _, err := planSvc.HandleFocusCompleted(context.Background()); err != nil {
 					log.Warn("автозакрытие вхождения", zap.Error(err))
@@ -106,7 +106,20 @@ func Start(dataDir, tasksURL, syncURL, syncToken string) string {
 	syncSvc := &syncer.Service{DB: db, Log: log}
 	h.WithSync(syncSvc, syncToken)
 	if syncURL != "" {
-		go syncer.NewClient(syncSvc, syncURL, syncToken, 60*time.Second, log).Run(ctx)
+		cl := syncer.NewClient(syncSvc, syncURL, syncToken, 60*time.Second, log)
+		cl.AfterPull = func(c context.Context) {
+			changed, err := eng.ReloadSettings(c)
+			if err != nil {
+				log.Warn("перечитывание настроек после синхронизации", zap.Error(err))
+				return
+			}
+			if changed {
+				if _, err := planSvc.Day(c, true); err != nil {
+					log.Warn("пересборка плана после синхронизации", zap.Error(err))
+				}
+			}
+		}
+		go cl.Run(ctx)
 	}
 
 	cancel = stop

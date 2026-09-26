@@ -221,6 +221,9 @@ func (r *presetRepo) GetByName(ctx context.Context, name string) (*models.Preset
 }
 
 func (r *presetRepo) Save(ctx context.Context, p *models.Preset) error {
+	if p.ID == uuid.Nil {
+		p.ID = uuid.New()
+	}
 	err := r.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "name"}},
 		DoUpdates: clause.AssignmentColumns([]string{"slots", "updated_at"}),

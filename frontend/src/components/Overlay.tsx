@@ -1,4 +1,4 @@
-import { Pause, Play, Square } from "lucide-react";
+import { CheckCheck, Pause, Play, Square } from "lucide-react";
 import { api } from "../api";
 import TimerPie from "./TimerPie";
 import type { Settings, State } from "../types";
@@ -69,8 +69,18 @@ export default function Overlay({ state, remaining, settings }: OverlayProps) {
               >
                 {state.paused ? <Play size={14} /> : <Pause size={14} />}
               </button>
+              {state.phase === "focus" && (
+                <button
+                  className="rounded-full bg-slate-800/80 p-1.5 text-white hover:bg-primary"
+                  title="Завершить с частичным зачётом"
+                  onClick={() => void api.stop("completed")}
+                >
+                  <CheckCheck size={14} />
+                </button>
+              )}
               <button
                 className="rounded-full bg-slate-800/80 p-1.5 text-white hover:bg-danger"
+                title="Стоп без зачёта"
                 onClick={() => void api.stop("")}
               >
                 <Square size={14} />
