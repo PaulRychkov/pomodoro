@@ -139,18 +139,59 @@ const restApi: typeof wailsApi = {
 
 export const api = isDesktop ? wailsApi : restApi;
 
+/**
+ * В REST/polling-режиме нет push-событий движка, поэтому причину перехода
+ * восстанавливаем сравнением предыдущего состояния с новым. За один опрос
+ * может случиться несколько переходов (например, помидор завершился и
+ * автостартовал перерыв), поэтому причин может быть несколько.
+ */
+function deriveReasons(prev: State, next: State, prevAt: number): string[] {
+  const reasons: string[] = [];
+  const sessionChanged = next.session_id !== prev.session_id;
+  const hadSession = prev.session_id != null;
+  if (next.completed_today < prev.completed_today) {
+    reasons.push("day_rolled");
+  }
+  if (hadSession && (next.phase === "idle" || sessionChanged)) {
+    // Перерыв счётчик не двигает: закончился сам, если к этому опросу его время вышло.
+    const breakRanOut =
+      prev.phase !== "focus" && !prev.paused && Date.now() >= prevAt + prev.remaining_seconds * 1000 - 1500;
+    reasons.push(next.completed_today > prev.completed_today || breakRanOut ? "completed" : "stopped");
+  }
+  if (sessionChanged && next.session_id != null) {
+    reasons.push("started");
+  }
+  if (!sessionChanged && next.session_id != null && prev.paused !== next.paused) {
+    reasons.push(next.paused ? "paused" : "resumed");
+  }
+  if (prev.settings_stamp !== next.settings_stamp) {
+    reasons.push("settings");
+  }
+  return reasons;
+}
+
 export function onStatePush(cb: (push: StatePush) => void): () => void {
   if (window.runtime) {
     return window.runtime.EventsOn("pomodoro:state", (data) => cb(data as StatePush));
   }
-  let prev = "";
+  let prev: State | null = null;
+  let prevAt = 0;
+  let prevKey = "";
   const timer = window.setInterval(async () => {
     try {
       const st = await restApi.getState();
       const key = JSON.stringify(st);
-      if (key !== prev) {
-        prev = key;
-        cb({ state: st, reason: "poll" } as StatePush);
+      if (key !== prevKey) {
+        const reasons = prev ? deriveReasons(prev, st, prevAt) : [];
+        prev = st;
+        prevAt = Date.now();
+        prevKey = key;
+        if (reasons.length === 0) {
+          reasons.push("poll");
+        }
+        for (const reason of reasons) {
+          cb({ state: st, reason });
+        }
       }
     } catch {
       /* сервер ещё поднимается */

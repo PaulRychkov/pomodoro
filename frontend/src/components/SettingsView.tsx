@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 import { Music, Play, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { api, isDesktop, playChime } from "../api";
+import { fmtClock, parseClock } from "../time";
 import type { Preset, ScheduleEntry, Settings } from "../types";
+
+const DEFAULT_DAY_START = 360; // 06:00
+const DEFAULT_DAY_END = 1200; // 20:00
+const MIN_DAY_MINUTES = 30;
 
 const WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
@@ -43,7 +48,7 @@ function PresetsSection() {
   const assigned = (weekday: number) => schedule.find((s) => s.weekday === weekday)?.preset_name ?? "";
 
   return (
-    <section className="rounded-2xl bg-surface p-4 shadow-sm sm:p-6 lg:col-span-2">
+    <section data-testid="presets-section" className="rounded-2xl bg-surface p-4 shadow-sm sm:p-6 lg:col-span-2">
       <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-muted">Пресеты помидорного дня</h2>
       <div className="mb-4 flex flex-wrap items-end gap-2">
         <div className="min-w-[200px] flex-1">
@@ -51,6 +56,7 @@ function PresetsSection() {
             Сохранить текущий план дня (число слотов и длительности) как пресет
           </span>
           <input
+            data-testid="preset-name"
             className="w-full rounded-xl border border-slate-200 px-3 py-1.5 text-sm outline-none focus:border-primary"
             placeholder="Название пресета, например «Интенсив»"
             value={newName}
@@ -58,6 +64,7 @@ function PresetsSection() {
           />
         </div>
         <button
+          data-testid="preset-save"
           className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark disabled:opacity-40"
           onClick={save}
           disabled={!newName.trim()}
@@ -68,13 +75,21 @@ function PresetsSection() {
       {presets.length > 0 && (
         <div className="mb-4 flex flex-col gap-1">
           {presets.map((p) => (
-            <div key={p.id} className="flex min-w-0 items-center gap-2 text-sm">
-              <span className="shrink-0 font-medium">{p.name}</span>
+            <div key={p.id} data-testid="preset-row" data-name={p.name} className="flex min-w-0 items-center gap-2 text-sm">
+              <span data-testid="preset-title" className="shrink-0 font-medium">
+                {p.name}
+              </span>
               <span className="min-w-0 truncate text-xs text-muted">
                 {p.slots.length} 🍅 · {p.slots.map((s) => `${s.focus_minutes}+${s.break_minutes}`).slice(0, 6).join(", ")}
                 {p.slots.length > 6 ? "…" : ""}
               </span>
-              <button className="ml-auto rounded-lg p-1 text-muted hover:text-danger" onClick={() => remove(p.name)}>
+              <button
+                data-testid="preset-delete"
+                data-name={p.name}
+                className="ml-auto rounded-lg p-1 text-muted hover:text-danger"
+                title="Удалить пресет"
+                onClick={() => remove(p.name)}
+              >
                 <Trash2 size={14} />
               </button>
             </div>
@@ -86,6 +101,8 @@ function PresetsSection() {
           <label key={label} className="flex items-center justify-between gap-2 text-sm">
             <span className="w-7 text-muted">{label}</span>
             <select
+              data-testid="preset-weekday"
+              data-weekday={i + 1}
               className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-transparent px-2 py-1 text-xs outline-none focus:border-primary"
               value={assigned(i + 1)}
               onChange={(e) => assign(i + 1, e.target.value)}
@@ -100,7 +117,11 @@ function PresetsSection() {
           </label>
         ))}
       </div>
-      {error && <div className="mt-3 text-sm text-danger">{error}</div>}
+      {error && (
+        <div data-testid="preset-error" className="mt-3 text-sm text-danger">
+          {error}
+        </div>
+      )}
     </section>
   );
 }
@@ -110,12 +131,26 @@ interface SettingsViewProps {
   onSaved: (s: Settings) => void;
 }
 
-function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+function Toggle({
+  checked,
+  onChange,
+  label,
+  testid,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+  testid: string;
+}) {
   return (
     <label className="flex cursor-pointer items-center justify-between gap-4 py-1">
       <span className="text-sm">{label}</span>
       <button
         type="button"
+        role="switch"
+        aria-checked={checked}
+        data-testid={testid}
+        data-checked={checked}
         onClick={() => onChange(!checked)}
         className={
           "relative h-6 w-11 rounded-full transition " + (checked ? "bg-primary" : "bg-slate-300")
@@ -132,13 +167,24 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
   );
 }
 
-function MinutesInput({ value, onChange, label }: { value: number; onChange: (seconds: number) => void; label: string }) {
+function MinutesInput({
+  value,
+  onChange,
+  label,
+  testid,
+}: {
+  value: number;
+  onChange: (seconds: number) => void;
+  label: string;
+  testid: string;
+}) {
   return (
     <label className="flex items-center justify-between gap-4 py-1">
       <span className="text-sm">{label}</span>
       <div className="flex items-center gap-2">
         <input
           type="number"
+          data-testid={testid}
           min={1}
           max={180}
           className="w-20 rounded-xl border border-slate-200 px-3 py-1.5 text-right text-sm outline-none focus:border-primary"
@@ -147,6 +193,50 @@ function MinutesInput({ value, onChange, label }: { value: number; onChange: (se
         />
         <span className="w-8 text-xs text-muted">мин</span>
       </div>
+    </label>
+  );
+}
+
+function TimeInput({
+  value,
+  onChange,
+  label,
+  testid,
+  invalid,
+}: {
+  value: number;
+  onChange: (minutes: number) => void;
+  label: string;
+  testid: string;
+  invalid?: boolean;
+}) {
+  // <input type="time"> не умеет «24:00», а при наборе временно отдаёт пустую строку,
+  // поэтому держим локальный текст и отдаём наружу только полные значения.
+  const shown = fmtClock(Math.min(value, 1439));
+  const [text, setText] = useState(shown);
+
+  useEffect(() => {
+    setText((t) => (parseClock(t) === Math.min(value, 1439) ? t : shown));
+  }, [value, shown]);
+
+  return (
+    <label className="flex items-center justify-between gap-4 py-1">
+      <span className="text-sm">{label}</span>
+      <input
+        type="time"
+        data-testid={testid}
+        aria-invalid={invalid ? true : undefined}
+        className={
+          "w-36 rounded-xl border px-2.5 py-1.5 text-right text-sm outline-none focus:border-primary " +
+          (invalid ? "border-danger" : "border-slate-200")
+        }
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          const m = parseClock(e.target.value);
+          if (m != null) onChange(m);
+        }}
+      />
     </label>
   );
 }
@@ -160,7 +250,13 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
 
   const patch = (p: Partial<Settings>) => setForm((f) => ({ ...f, ...p }));
 
+  const dayStart = form.day_start_minutes ?? DEFAULT_DAY_START;
+  const dayEnd = form.day_end_minutes ?? DEFAULT_DAY_END;
+  const dayError =
+    dayEnd - dayStart < MIN_DAY_MINUTES ? "Конец дня должен быть минимум на 30 минут позже начала" : null;
+
   const save = () => {
+    if (dayError) return;
     api
       .saveSettings(form)
       .then((saved) => {
@@ -185,24 +281,32 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <section className="rounded-2xl bg-surface p-4 shadow-sm sm:p-5">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Длительности</h2>
-        <MinutesInput label="Фокус" value={form.focus_duration_seconds} onChange={(v) => patch({ focus_duration_seconds: v })} />
-        <MinutesInput label="Короткий перерыв" value={form.short_break_seconds} onChange={(v) => patch({ short_break_seconds: v })} />
-        <MinutesInput label="Длинный перерыв" value={form.long_break_seconds} onChange={(v) => patch({ long_break_seconds: v })} />
+        <MinutesInput testid="set-focus" label="Фокус" value={form.focus_duration_seconds} onChange={(v) => patch({ focus_duration_seconds: v })} />
+        <MinutesInput testid="set-short" label="Короткий перерыв" value={form.short_break_seconds} onChange={(v) => patch({ short_break_seconds: v })} />
+        <MinutesInput testid="set-long" label="Длинный перерыв" value={form.long_break_seconds} onChange={(v) => patch({ long_break_seconds: v })} />
         <div className="mt-3 border-t border-slate-100 pt-3">
-          <Toggle label="Автостарт перерыва" checked={form.auto_start_break} onChange={(v) => patch({ auto_start_break: v })} />
-          <Toggle label="Автостарт фокуса" checked={form.auto_start_focus} onChange={(v) => patch({ auto_start_focus: v })} />
+          <Toggle testid="set-autostart-break" label="Автостарт перерыва" checked={form.auto_start_break} onChange={(v) => patch({ auto_start_break: v })} />
+          <Toggle testid="set-autostart-focus" label="Автостарт фокуса" checked={form.auto_start_focus} onChange={(v) => patch({ auto_start_focus: v })} />
         </div>
       </section>
 
       <section className="rounded-2xl bg-surface p-4 shadow-sm sm:p-5">
         <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Блоки дня</h2>
         <p className="mb-3 text-xs text-muted">
-          Число помидоров в каждом блоке. Внутри блока — короткие перерывы, между блоками — длинный.
+          Блоки задают ритм длинных перерывов: внутри блока — короткие перерывы, после каждого блока — длинный. Сколько
+          помидоров будет в дне, определяют границы дня (раздел «План дня»), а не блоки.
         </p>
-        <div className="flex flex-wrap items-center gap-2">
+        <div data-testid="set-blocks" className="flex flex-wrap items-center gap-2">
           {form.day_blocks.map((b, i) => (
-            <div key={i} className="flex items-center gap-1 rounded-xl border border-slate-200 px-2 py-1">
+            <div
+              key={i}
+              data-testid="set-block-item"
+              data-index={i}
+              className="flex items-center gap-1 rounded-xl border border-slate-200 px-2 py-1"
+            >
               <input
+                data-testid="set-block"
+                data-index={i}
                 type="number"
                 min={1}
                 max={16}
@@ -211,7 +315,10 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
                 onChange={(e) => setBlock(i, Number(e.target.value))}
               />
               <button
+                data-testid="set-block-remove"
+                data-index={i}
                 className="text-muted hover:text-danger disabled:opacity-30"
+                title="Удалить блок"
                 disabled={form.day_blocks.length <= 1}
                 onClick={() => patch({ day_blocks: form.day_blocks.filter((_, j) => j !== i) })}
               >
@@ -220,6 +327,7 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
             </div>
           ))}
           <button
+            data-testid="set-block-add"
             className="flex items-center gap-1 rounded-xl border border-dashed border-slate-300 px-3 py-1.5 text-sm text-muted hover:border-primary hover:text-primary-dark disabled:opacity-30"
             disabled={form.day_blocks.length >= 24}
             onClick={() => patch({ day_blocks: [...form.day_blocks, 4] })}
@@ -232,41 +340,26 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
       <section className="rounded-2xl bg-surface p-4 shadow-sm sm:p-5">
         <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">План дня</h2>
         <p className="mb-3 text-xs text-muted">
-          Якорь дня — задачи с фиксированным временем и помидорами (окна дня). Вокруг и между окнами — гибкие задачи, внутри блоков окна — доля помидоров его задаче.
+          Активный день: все помидоры плана раскладываются только внутри этих границ. Задачи с фиксированным временем и
+          помидорами — окна (например, «Работа»); другие задачи могут занять лишь оставшуюся долю помидоров окна,
+          равномерно. События без помидоров (обед, спортзал) вырезаются из дня.
         </p>
-        <label className="flex items-center justify-between gap-4 py-1">
-          <span className="text-sm">До первого окна дня</span>
-          <div className="flex items-center gap-2">
+        <TimeInput testid="set-day-start" label="Начало дня" value={dayStart} invalid={dayError != null} onChange={(v) => patch({ day_start_minutes: v })} />
+        <TimeInput testid="set-day-end" label="Конец дня" value={dayEnd} invalid={dayError != null} onChange={(v) => patch({ day_end_minutes: v })} />
+        {dayError && (
+          <p data-testid="settings-day-error" role="alert" className="mt-1 text-xs text-danger">
+            {dayError}
+          </p>
+        )}
+        <label className="mt-1 flex items-center justify-between gap-4 py-1">
+          <span className="min-w-0">
+            <span className="block text-sm">Доля помидоров задаче окна</span>
+            <span className="block text-xs text-muted">остальное — другим задачам, равномерно</span>
+          </span>
+          <div className="flex shrink-0 items-center gap-2">
             <input
               type="number"
-              min={0}
-              max={600}
-              className="w-20 rounded-xl border border-slate-200 px-3 py-1.5 text-right text-sm outline-none focus:border-primary"
-              value={form.plan_before_window_minutes}
-              onChange={(e) => patch({ plan_before_window_minutes: Math.min(600, Math.max(0, Number(e.target.value) || 0)) })}
-            />
-            <span className="w-8 text-xs text-muted">мин</span>
-          </div>
-        </label>
-        <label className="flex items-center justify-between gap-4 py-1">
-          <span className="text-sm">После последнего окна</span>
-          <div className="flex items-center gap-2">
-            <input
-              type="number"
-              min={0}
-              max={600}
-              className="w-20 rounded-xl border border-slate-200 px-3 py-1.5 text-right text-sm outline-none focus:border-primary"
-              value={form.plan_after_window_minutes}
-              onChange={(e) => patch({ plan_after_window_minutes: Math.min(600, Math.max(0, Number(e.target.value) || 0)) })}
-            />
-            <span className="w-8 text-xs text-muted">мин</span>
-          </div>
-        </label>
-        <label className="flex items-center justify-between gap-4 py-1">
-          <span className="text-sm">Доля помидоров задаче окна</span>
-          <div className="flex items-center gap-2">
-            <input
-              type="number"
+              data-testid="set-share"
               min={0}
               max={100}
               className="w-20 rounded-xl border border-slate-200 px-3 py-1.5 text-right text-sm outline-none focus:border-primary"
@@ -280,15 +373,16 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
 
       <section className="rounded-2xl bg-surface p-4 shadow-sm sm:p-5">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Звук</h2>
-        <Toggle label="Звук окончания" checked={form.sound_enabled} onChange={(v) => patch({ sound_enabled: v })} />
+        <Toggle testid="set-sound" label="Звук окончания" checked={form.sound_enabled} onChange={(v) => patch({ sound_enabled: v })} />
         <div className="mt-2 flex items-center gap-2 text-sm">
           <Music size={15} className="text-muted" />
-          <span className="flex-1 truncate text-muted">
+          <span data-testid="set-sound-file" className="flex-1 truncate text-muted">
             {form.sound_file ? form.sound_file : "встроенный сигнал"}
           </span>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <button
+            data-testid="set-sound-pick"
             className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm hover:border-primary"
             onClick={() => {
               const host = (window as unknown as { AndroidHost?: { pickSound: () => void } }).AndroidHost;
@@ -309,6 +403,7 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
             Выбрать файл...
           </button>
           <button
+            data-testid="set-sound-reset"
             className="flex items-center gap-1 rounded-xl border border-slate-200 px-3 py-1.5 text-sm hover:border-primary disabled:opacity-30"
             disabled={!form.sound_file}
             onClick={() => patch({ sound_file: null })}
@@ -316,6 +411,7 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
             <RotateCcw size={14} /> Встроенный
           </button>
           <button
+            data-testid="set-sound-test"
             className="flex items-center gap-1 rounded-xl border border-slate-200 px-3 py-1.5 text-sm hover:border-primary"
             onClick={() => playChime(settings.sound_file)}
           >
@@ -325,7 +421,7 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
         <p className="mt-2 text-xs text-muted">Свой файл начнёт играть после сохранения настроек.</p>
       </section>
 
-      <section className={"rounded-2xl bg-surface p-4 shadow-sm sm:p-5 " + (isDesktop ? "" : "hidden")}>
+      <section data-testid="overlay-section" className={"rounded-2xl bg-surface p-4 shadow-sm sm:p-5 " + (isDesktop ? "" : "hidden")}>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Оверлей</h2>
         <label className="block py-1">
           <div className="mb-1 flex justify-between text-sm">
@@ -338,6 +434,7 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
             max={600}
             step={10}
             className="w-full accent-[#00ADD8]"
+            data-testid="set-overlay-size"
             value={form.overlay.size}
             onChange={(e) => patch({ overlay: { ...form.overlay, size: Number(e.target.value) } })}
           />
@@ -353,6 +450,7 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
             max={160}
             step={2}
             className="w-full accent-[#00ADD8]"
+            data-testid="set-overlay-digits-size"
             value={form.overlay.digits_size}
             onChange={(e) => patch({ overlay: { ...form.overlay, digits_size: Number(e.target.value) } })}
           />
@@ -368,6 +466,7 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
             max={1}
             step={0.05}
             className="w-full accent-[#00ADD8]"
+            data-testid="set-overlay-circle-opacity"
             value={form.overlay.circle_opacity}
             onChange={(e) => patch({ overlay: { ...form.overlay, circle_opacity: Number(e.target.value) } })}
           />
@@ -383,6 +482,7 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
             max={1}
             step={0.05}
             className="w-full accent-[#00ADD8]"
+            data-testid="set-overlay-digits-opacity"
             value={form.overlay.digits_opacity}
             onChange={(e) => patch({ overlay: { ...form.overlay, digits_opacity: Number(e.target.value) } })}
           />
@@ -398,11 +498,13 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
             max={1}
             step={0.05}
             className="w-full accent-[#00ADD8]"
+            data-testid="set-overlay-buttons-opacity"
             value={form.overlay.buttons_opacity}
             onChange={(e) => patch({ overlay: { ...form.overlay, buttons_opacity: Number(e.target.value) } })}
           />
         </label>
         <Toggle
+          testid="set-overlay-show-time"
           label="Показывать цифры остатка"
           checked={form.overlay.show_time}
           onChange={(v) => patch({ overlay: { ...form.overlay, show_time: v } })}
@@ -413,13 +515,24 @@ export default function SettingsView({ settings, onSaved }: SettingsViewProps) {
 
       <div className="flex items-center gap-3 lg:col-span-2">
         <button
-          className="rounded-xl bg-primary px-6 py-2.5 text-sm font-medium text-white shadow hover:bg-primary-dark"
+          data-testid="settings-save"
+          className="rounded-xl bg-primary px-6 py-2.5 text-sm font-medium text-white shadow hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={dayError != null}
+          title={dayError ?? undefined}
           onClick={save}
         >
           Сохранить настройки
         </button>
-        {status && <span className="text-sm text-success">{status}</span>}
-        {error && <span className="max-w-md truncate text-sm text-danger">{error}</span>}
+        {status && (
+          <span data-testid="settings-status" className="text-sm text-success">
+            {status}
+          </span>
+        )}
+        {error && (
+          <span data-testid="settings-error" className="max-w-md truncate text-sm text-danger" title={error}>
+            {error}
+          </span>
+        )}
       </div>
     </div>
   );

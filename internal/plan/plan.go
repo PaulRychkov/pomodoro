@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,6 +21,59 @@ type Service struct {
 	Tasks     *tasksclient.Client
 	Settings  func() models.Settings
 	Completed func() int
+	// Now — часы плана; nil означает time.Now. Подменяются в тестах.
+	Now func() time.Time
+
+	// building — Day и SetSlot по одному: их зовут и UI, и REST/MCP, и
+	// уведомления движка. Под ним можно звать движок; mu — нельзя.
+	building sync.Mutex
+	mu       sync.Mutex
+	cached   dayCache
+}
+
+// dayCache — последний построенный план дня. Его читает движок под своей
+// блокировкой, поэтому тут нельзя звать ни Settings, ни Completed.
+type dayCache struct {
+	date   string
+	rows   []models.PlanSlot
+	blocks []int
+}
+
+func (s *Service) now() time.Time {
+	if s.Now != nil {
+		return s.Now().Local()
+	}
+	return time.Now().Local()
+}
+
+func (s *Service) today() string {
+	return s.now().Format("2006-01-02")
+}
+
+func (s *Service) remember(date string, rows []models.PlanSlot, blocks []int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cached = dayCache{date: date, rows: append([]models.PlanSlot(nil), rows...), blocks: blocks}
+}
+
+func (s *Service) cachedRows() ([]models.PlanSlot, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cached.date != s.today() {
+		return nil, false
+	}
+	return s.cached.rows, true
+}
+
+// Blocks — размеры блоков сегодняшнего плана по порядку (длинный перерыв
+// после каждого блока); nil, если план дня ещё не построен.
+func (s *Service) Blocks() []int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cached.date != s.today() {
+		return nil
+	}
+	return append([]int(nil), s.cached.blocks...)
 }
 
 type SlotView struct {
@@ -28,9 +83,16 @@ type SlotView struct {
 	FocusMinutes *int            `json:"focus_minutes"`
 	BreakMinutes *int            `json:"break_minutes"`
 	StartMinutes *int            `json:"start_minutes"`
-	Pinned       bool            `json:"pinned"`
-	Done         bool            `json:"done"`
-	Overflow     bool            `json:"overflow"`
+	EndMinutes   *int            `json:"end_minutes"`
+	// Период дня, в который уложен слот: свободное время или окно задачи
+	// с фиксированным временем (WindowID/WindowTitle — задача окна).
+	PeriodStartMinutes *int    `json:"period_start_minutes"`
+	PeriodEndMinutes   *int    `json:"period_end_minutes"`
+	WindowID           *string `json:"window_id"`
+	WindowTitle        *string `json:"window_title"`
+	Pinned             bool    `json:"pinned"`
+	Done               bool    `json:"done"`
+	Overflow           bool    `json:"overflow"`
 }
 
 type SlotUpdate struct {
@@ -46,134 +108,177 @@ type ScheduleEntry struct {
 	PresetName string `json:"preset_name"`
 }
 
-func today() string {
-	return time.Now().Local().Format("2006-01-02")
+// Day возвращает план дня с прогнозом времени. План строится, когда его ещё
+// нет или просят пересобрать, и пересчитывается сам, если какой-то
+// несделанный помидор уже не успевает закончиться внутри своего периода.
+func (s *Service) Day(ctx context.Context, refresh bool) ([]SlotView, error) {
+	s.building.Lock()
+	defer s.building.Unlock()
+	return s.day(ctx, refresh)
 }
 
-func (s *Service) Day(ctx context.Context, refresh bool) ([]SlotView, error) {
-	date := today()
+func (s *Service) day(ctx context.Context, refresh bool) ([]SlotView, error) {
+	now := s.now()
+	date := now.Format("2006-01-02")
 	settings := s.Settings()
-	preset, err := s.presetFor(ctx, time.Now().Local())
+	preset, err := s.presetFor(ctx, now)
 	if err != nil {
 		return nil, err
 	}
-	existing, err := s.Store.Plans().ListDay(ctx, date)
+	rows, err := s.Store.Plans().ListDay(ctx, date)
 	if err != nil {
 		return nil, err
 	}
-	due, dueErr := s.Tasks.DueToday(ctx, time.Now().Local())
+	due, dueErr := s.Tasks.DueToday(ctx, now)
 	tasksOK := dueErr == nil
-	layout := computeDayLayout(settings, dayIntervals(due))
-	committed := sum(settings.DayBlocks)
-	if preset != nil {
-		committed = len(preset.Slots)
+	rt := s.runtime(ctx, now)
+	dayStart, _ := dayBounds(settings)
+
+	build := func(proj projection) error {
+		rows = buildDay(buildInput{
+			date:     date,
+			settings: settings,
+			preset:   preset,
+			due:      due,
+			existing: rows,
+			frozen:   rt.frozen(),
+			from:     max(proj.from, dayStart),
+		})
+		return s.Store.Plans().ReplaceDay(ctx, date, rows)
 	}
-	if committed == 0 && layout != nil {
-		committed = layout.total
-	}
-	total := committed
-	if !tasksOK && len(existing) > 0 {
-		total = len(existing)
-	}
-	completed := s.Completed()
-	if !tasksOK && len(existing) > 0 {
-		refresh = false
-	}
-	if refresh || len(existing) == 0 || len(existing) < committed {
-		existing = buildSlots(date, total, preset, due, existing, settings, tasksOK, completed, layout, committed)
-		if err := s.Store.Plans().ReplaceDay(ctx, date, existing); err != nil {
+	rebuilt := false
+	stale := needsLayout(rows, rt.frozen()) ||
+		tasksOK && preset == nil && windowsChanged(rows, rt.frozen(), dayPeriods(settings, due), rt.now, durationsOf(settings))
+	if (refresh || len(rows) == 0 || stale) && (tasksOK || len(rows) == 0) {
+		if err := build(project(rows, rt)); err != nil {
 			return nil, err
 		}
+		rebuilt = true
 	}
-	starts := s.projectDayStarts(ctx, existing, settings, completed)
-	views := make([]SlotView, 0, total)
-	for i, sl := range existing {
-		view := SlotView{
-			Idx:          sl.Idx,
-			Task:         sl.Task(),
-			Label:        sl.Label,
-			FocusMinutes: secToMin(sl.FocusSeconds),
-			BreakMinutes: secToMin(sl.BreakSeconds),
-			Pinned:       sl.Pinned,
-			Done:         sl.Idx < completed,
-			Overflow:     committed > 0 && sl.Idx >= committed,
+	proj := project(rows, rt)
+	if proj.displaced && tasksOK && !rebuilt {
+		if err := build(proj); err != nil {
+			return nil, err
 		}
-		if i < len(starts) && starts[i] >= 0 {
-			start := starts[i]
+		proj = project(rows, rt)
+	}
+	s.remember(date, rows, planBlocks(rows, durationsOf(settings)))
+
+	views := make([]SlotView, 0, len(rows))
+	for i, sl := range rows {
+		view := SlotView{
+			Idx:                sl.Idx,
+			Task:               sl.Task(),
+			Label:              sl.Label,
+			FocusMinutes:       secToMin(sl.FocusSeconds),
+			BreakMinutes:       secToMin(sl.BreakSeconds),
+			PeriodStartMinutes: sl.PeriodStartMin,
+			PeriodEndMinutes:   sl.PeriodEndMin,
+			WindowID:           sl.WindowID,
+			WindowTitle:        sl.WindowTitle,
+			Pinned:             sl.Pinned || sl.PinnedFocus || sl.PinnedBreak,
+			Done:               sl.Idx < rt.completed,
+			Overflow:           sl.Overflow,
+		}
+		if start := proj.starts[i]; start >= 0 {
 			view.StartMinutes = &start
+			if !view.Done {
+				end := start + focusMinutes(sl, durationsOf(settings).focus)
+				view.EndMinutes = &end
+			}
 		}
 		views = append(views, view)
 	}
 	return views, nil
 }
 
-func (s *Service) projectDayStarts(ctx context.Context, slots []models.PlanSlot, settings models.Settings, completed int) []int {
-	defFocus := settings.FocusDurationSeconds / 60
-	if defFocus <= 0 {
-		defFocus = 25
-	}
-	defBreak := settings.ShortBreakSeconds / 60
-	if defBreak < 0 {
-		defBreak = 0
-	}
-	durs := make([]slotDuration, len(slots))
-	for i, sl := range slots {
-		d := slotDuration{focus: defFocus, brk: defBreak}
-		if m := secToMin(sl.FocusSeconds); m != nil && *m > 0 {
-			d.focus = *m
+// needsLayout — в плане есть несделанные слоты без места в дне (план
+// построен старой версией без привязки ко времени).
+func needsLayout(rows []models.PlanSlot, frozen int) bool {
+	for _, sl := range rows {
+		if sl.Idx >= frozen && !sl.Overflow && (sl.StartMin == nil || sl.PeriodEndMin == nil) {
+			return true
 		}
-		if m := secToMin(sl.BreakSeconds); m != nil && *m > 0 {
-			d.brk = *m
-		}
-		durs[i] = d
 	}
-	now := time.Now().Local()
-	nowMin := now.Hour()*60 + now.Minute()
+	return false
+}
+
+// windowsChanged — окна дня разошлись с планом: впереди есть окно, под
+// которое в плане нет ни одного помидора (план строился без задач или окно
+// появилось позже), или несделанные помидоры стоят в окне, которого больше нет.
+func windowsChanged(rows []models.PlanSlot, frozen int, ps []period, now int, d durations) bool {
+	planned := map[string]bool{}
+	for _, sl := range rows {
+		if sl.WindowID != nil && sl.PeriodEndMin != nil {
+			planned[*sl.WindowID+"@"+strconv.Itoa(*sl.PeriodEndMin)] = true
+		}
+	}
+	current := map[string]bool{}
+	for _, p := range ps {
+		id := p.windowID()
+		if id == "" {
+			continue
+		}
+		key := id + "@" + strconv.Itoa(p.end)
+		current[key] = true
+		if p.end-max(p.start, now) >= d.focus+d.short && !planned[key] {
+			return true
+		}
+	}
+	for _, sl := range rows {
+		if sl.Idx >= frozen && sl.WindowID != nil && sl.PeriodEndMin != nil &&
+			!current[*sl.WindowID+"@"+strconv.Itoa(*sl.PeriodEndMin)] {
+			return true
+		}
+	}
+	return false
+}
+
+// runtime собирает фактическое состояние дня: сколько сделано, когда
+// начинались сделанные помидоры, что идёт сейчас и не ждёт ли перерыв.
+func (s *Service) runtime(ctx context.Context, now time.Time) dayRuntime {
+	rt := dayRuntime{now: minuteOfDay(now), completed: s.Completed(), lastFocusEnd: -1}
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-
-	var past []int
-	if sessions, err := s.Store.Sessions().ListRange(ctx, dayStart, now); err == nil {
+	if sessions, err := s.Store.Sessions().ListRange(ctx, dayStart, now.Add(time.Second)); err == nil {
+		sort.SliceStable(sessions, func(i, j int) bool { return sessions[i].StartedAt.Before(sessions[j].StartedAt) })
 		for _, ses := range sessions {
-			if ses.Kind != models.KindFocus || ses.Outcome == nil || *ses.Outcome != models.OutcomeCompleted {
-				continue
+			if ses.Kind == models.KindFocus && ses.Outcome != nil && *ses.Outcome == models.OutcomeCompleted {
+				rt.past = append(rt.past, minuteOfDay(ses.StartedAt.Local()))
 			}
-			started := ses.StartedAt.Local()
-			past = append(past, started.Hour()*60+started.Minute())
+		}
+		if n := len(sessions); n > 0 {
+			last := sessions[n-1]
+			if last.Kind == models.KindFocus && last.EndedAt != nil && last.Outcome != nil &&
+				*last.Outcome == models.OutcomeCompleted && sameDay(*last.EndedAt, now) {
+				rt.lastFocusEnd = minuteOfDay(last.EndedAt.Local())
+			}
 		}
 	}
-	if len(past) > completed {
-		past = past[:completed]
-	}
-
-	var active *activeSlot
 	if a, err := s.Store.Sessions().FindActive(ctx); err == nil && a != nil {
-		started := a.StartedAt.Local()
-		remaining := a.PlannedDurationSeconds/60 - int(now.Sub(a.StartedAt).Minutes())
-		if remaining < 0 {
-			remaining = 0
-		}
-		active = &activeSlot{
-			startMin:     started.Hour()*60 + started.Minute(),
-			remainingMin: remaining,
+		rt.active = &activeSlot{
+			startMin:     minuteOfDay(a.StartedAt.Local()),
+			remainingMin: (a.RemainingSeconds(now) + 59) / 60,
 			isFocus:      a.Kind == models.KindFocus,
 		}
 	}
-	return projectStarts(durs, past, nowMin, active)
+	return rt
 }
 
-func sum(xs []int) int {
-	total := 0
-	for _, x := range xs {
-		total += x
-	}
-	return total
+func minuteOfDay(t time.Time) int {
+	return t.Hour()*60 + t.Minute()
+}
+
+func sameDay(a, b time.Time) bool {
+	return a.Local().Format("2006-01-02") == b.Local().Format("2006-01-02")
 }
 
 func (s *Service) SetSlot(ctx context.Context, idx int, upd SlotUpdate) ([]SlotView, error) {
+	s.building.Lock()
+	defer s.building.Unlock()
 	if idx < 0 {
 		return nil, fmt.Errorf("bad slot index %d", idx)
 	}
-	date := today()
+	date := s.today()
 	existing, err := s.Store.Plans().ListDay(ctx, date)
 	if err != nil {
 		return nil, err
@@ -200,24 +305,36 @@ func (s *Service) SetSlot(ctx context.Context, idx int, upd SlotUpdate) ([]SlotV
 		sl.Label = nil
 	}
 	if upd.FocusMinutes != nil {
-		sl.FocusSeconds = minToSec(upd.FocusMinutes)
+		sl.PinnedFocus = *upd.FocusMinutes > 0
+		if sl.PinnedFocus {
+			sl.FocusSeconds = minToSec(upd.FocusMinutes)
+		}
 	}
 	if upd.BreakMinutes != nil {
-		sl.BreakSeconds = minToSec(upd.BreakMinutes)
+		sl.PinnedBreak = *upd.BreakMinutes > 0
+		if sl.PinnedBreak {
+			sl.BreakSeconds = minToSec(upd.BreakMinutes)
+		}
 	}
-	sl.Pinned = sl.TaskSource != nil || sl.Label != nil || sl.FocusSeconds != nil || sl.BreakSeconds != nil
+	sl.Pinned = sl.TaskSource != nil || sl.Label != nil
 	if err := s.Store.Plans().Upsert(ctx, &sl); err != nil {
 		return nil, err
 	}
-	return s.Day(ctx, true)
+	return s.day(ctx, true)
 }
 
+// SlotDurations — длительности фокуса и перерыва слота idx. Читает кеш плана:
+// движок зовёт это под своей блокировкой.
 func (s *Service) SlotDurations(idx int) (focusSeconds, breakSeconds *int) {
-	slots, err := s.Store.Plans().ListDay(context.Background(), today())
-	if err != nil {
-		return nil, nil
+	rows, ok := s.cachedRows()
+	if !ok {
+		var err error
+		rows, err = s.Store.Plans().ListDay(context.Background(), s.today())
+		if err != nil {
+			return nil, nil
+		}
 	}
-	for _, sl := range slots {
+	for _, sl := range rows {
 		if sl.Idx == idx {
 			return sl.FocusSeconds, sl.BreakSeconds
 		}
@@ -226,7 +343,8 @@ func (s *Service) SlotDurations(idx int) (focusSeconds, breakSeconds *int) {
 }
 
 func (s *Service) HandleFocusCompleted(ctx context.Context) (string, bool, error) {
-	slots, err := s.Store.Plans().ListDay(ctx, today())
+	now := s.now()
+	slots, err := s.Store.Plans().ListDay(ctx, now.Format("2006-01-02"))
 	if err != nil || len(slots) == 0 {
 		return "", false, err
 	}
@@ -244,7 +362,6 @@ func (s *Service) HandleFocusCompleted(ctx context.Context) (string, bool, error
 	if m := secToMin(last.FocusSeconds); m != nil && *m > 0 {
 		minutes = *m
 	}
-	now := time.Now().Local()
 	if focus, ok := s.lastCompletedFocusSeconds(ctx, now); ok {
 		minutes = (focus + 30) / 60
 	}
@@ -253,8 +370,14 @@ func (s *Service) HandleFocusCompleted(ctx context.Context) (string, bool, error
 			return ext, false, err
 		}
 	}
+	nowMin := minuteOfDay(now)
 	for _, sl := range slots {
 		if sl.Idx >= completed && sl.TaskExternalID != nil && *sl.TaskExternalID == ext {
+			return ext, false, nil
+		}
+		// Окно с фиксированным временем не закрываем раньше его конца:
+		// иначе при пересборке его время отдалось бы другим задачам.
+		if sl.WindowID != nil && *sl.WindowID == ext && sl.PeriodEndMin != nil && *sl.PeriodEndMin > nowMin {
 			return ext, false, nil
 		}
 	}
@@ -277,7 +400,7 @@ func (s *Service) lastCompletedFocusSeconds(ctx context.Context, now time.Time) 
 }
 
 func (s *Service) Candidates(ctx context.Context) ([]tasksclient.TaskOption, error) {
-	due, err := s.Tasks.DueToday(ctx, time.Now().Local())
+	due, err := s.Tasks.DueToday(ctx, s.now())
 	if err != nil {
 		return []tasksclient.TaskOption{}, nil
 	}
@@ -336,7 +459,7 @@ func (s *Service) PickerTree(ctx context.Context) ([]PickerNode, error) {
 		return []PickerNode{}, nil
 	}
 	todaySet := map[string]bool{}
-	if todayTasks, terr := s.Tasks.DueToday(ctx, time.Now().Local()); terr == nil {
+	if todayTasks, terr := s.Tasks.DueToday(ctx, s.now()); terr == nil {
 		for _, d := range todayTasks {
 			todaySet[d.Option.ExternalID] = true
 		}
@@ -436,7 +559,7 @@ func (s *Service) SavePreset(ctx context.Context, name string) ([]models.Preset,
 	if name == "" {
 		return nil, fmt.Errorf("preset name is required")
 	}
-	slots, err := s.Store.Plans().ListDay(ctx, today())
+	slots, err := s.Store.Plans().ListDay(ctx, s.today())
 	if err != nil {
 		return nil, err
 	}
@@ -448,6 +571,9 @@ func (s *Service) SavePreset(ctx context.Context, name string) ([]models.Preset,
 	defBreak := settings.ShortBreakSeconds / 60
 	ps := make(models.PresetSlots, 0, len(slots))
 	for _, sl := range slots {
+		if sl.Overflow {
+			continue
+		}
 		p := models.PresetSlot{FocusMinutes: defFocus, BreakMinutes: defBreak}
 		if m := secToMin(sl.FocusSeconds); m != nil {
 			p.FocusMinutes = *m
@@ -567,30 +693,6 @@ func minToSec(min *int) *int {
 	return &s
 }
 
-type layoutBlock struct {
-	start    int
-	end      int
-	windowID string
-}
-
-type slotShape struct {
-	focus int
-	brk   int
-}
-
-type dayLayout struct {
-	total  int
-	blocks []layoutBlock
-	shapes []slotShape
-}
-
-func (l *dayLayout) shapeAt(idx int) (slotShape, bool) {
-	if l == nil || idx < 0 || idx >= len(l.shapes) {
-		return slotShape{}, false
-	}
-	return l.shapes[idx], true
-}
-
 type dayInterval struct {
 	start   int
 	length  int
@@ -666,252 +768,6 @@ func carveBlocked(window dayInterval, blocked []dayInterval) []dayInterval {
 		parts = next
 	}
 	return parts
-}
-
-func computeDayLayout(settings models.Settings, items []dayInterval) *dayLayout {
-	if len(items) == 0 {
-		return nil
-	}
-	focus := settings.FocusDurationSeconds / 60
-	if focus <= 0 {
-		focus = 25
-	}
-	short := settings.ShortBreakSeconds / 60
-	if short < 0 {
-		short = 0
-	}
-	long := settings.LongBreakSeconds / 60
-	if long <= 0 {
-		long = short
-	}
-	blockSize := 0
-	for _, b := range settings.DayBlocks {
-		if b > 0 {
-			blockSize = b
-			break
-		}
-	}
-	if blockSize <= 0 {
-		blockSize = 4
-	}
-	before := settings.PlanBeforeWindowMin
-	if before < 0 {
-		before = 0
-	}
-	after := settings.PlanAfterWindowMin
-	if after < 0 {
-		after = 0
-	}
-	type segment struct {
-		length   int
-		windowID string
-	}
-	var segments []segment
-	segments = append(segments, segment{before, ""})
-	for i, it := range items {
-		if !it.blocked {
-			segments = append(segments, segment{it.length, it.option.ExternalID})
-		}
-		if i+1 < len(items) {
-			gap := items[i+1].start - (it.start + it.length)
-			if gap > 0 {
-				segments = append(segments, segment{gap, ""})
-			}
-		}
-	}
-	segments = append(segments, segment{after, ""})
-	fitCfg := DefaultFitConfig(focus, short, long, blockSize)
-	fitCfg.MinShort = short
-	fitCfg.MinLong = long
-	l := &dayLayout{}
-	idx := 0
-	for _, seg := range segments {
-		fit := FitPeriod(seg.length, fitCfg)
-		if fit.Count == 0 {
-			continue
-		}
-		n := 0
-		bStart := idx
-		for k := 0; k < fit.Count; k++ {
-			brk := fit.Short
-			if (k+1)%blockSize == 0 && k+1 < fit.Count {
-				brk = fit.Long
-			}
-			l.shapes = append(l.shapes, slotShape{focus: fit.Focus, brk: brk})
-			idx++
-			n++
-			if n == blockSize {
-				l.blocks = append(l.blocks, layoutBlock{bStart, idx, seg.windowID})
-				bStart = idx
-				n = 0
-			}
-		}
-		if n > 0 {
-			l.blocks = append(l.blocks, layoutBlock{bStart, idx, seg.windowID})
-		}
-	}
-	l.total = idx
-	return l
-}
-
-func buildSlots(date string, total int, preset *models.Preset, due []tasksclient.DueTask, existing []models.PlanSlot, settings models.Settings, tasksOK bool, frozen int, layout *dayLayout, committed int) []models.PlanSlot {
-	defaultFocusMin := settings.FocusDurationSeconds / 60
-	if defaultFocusMin <= 0 {
-		defaultFocusMin = 25
-	}
-	valid := map[string]bool{}
-	for _, d := range due {
-		valid[d.Option.ExternalID] = true
-	}
-	slotFocusMin := func(sl models.PlanSlot, idx int) int {
-		if m := secToMin(sl.FocusSeconds); m != nil && *m > 0 {
-			return *m
-		}
-		if preset != nil && idx < len(preset.Slots) && preset.Slots[idx].FocusMinutes > 0 {
-			return preset.Slots[idx].FocusMinutes
-		}
-		if sh, ok := layout.shapeAt(idx); ok && sh.focus > 0 {
-			return sh.focus
-		}
-		return defaultFocusMin
-	}
-	pinned := map[int]models.PlanSlot{}
-	pinnedMinutes := map[string]int{}
-	for _, sl := range existing {
-		if sl.Idx >= total {
-			continue
-		}
-		fixed := sl.Idx < frozen
-		if !tasksOK && (sl.TaskExternalID != nil || sl.Label != nil) {
-			fixed = true
-		}
-		if !fixed && !sl.Pinned {
-			continue
-		}
-		if !fixed && tasksOK && sl.TaskExternalID != nil && !valid[*sl.TaskExternalID] {
-			continue
-		}
-		pinned[sl.Idx] = sl
-		if sl.TaskExternalID != nil {
-			pinnedMinutes[*sl.TaskExternalID] += slotFocusMin(sl, sl.Idx)
-		}
-	}
-
-	windowByID := map[string]tasksclient.TaskOption{}
-	for _, it := range dayIntervals(due) {
-		if it.blocked {
-			continue
-		}
-		windowByID[it.option.ExternalID] = it.option
-	}
-	windowAt := planWindowPositions(layout, pinned, windowByID, settings.WindowSharePercent)
-
-	avgFocusMin := 0
-	for i := 0; i < total; i++ {
-		avgFocusMin += slotFocusMin(models.PlanSlot{Date: date, Idx: i}, i)
-	}
-	if total > 0 {
-		avgFocusMin /= total
-	}
-	if avgFocusMin <= 0 {
-		avgFocusMin = defaultFocusMin
-	}
-
-	ordered := append([]tasksclient.DueTask(nil), due...)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		return priorityWeightPercent(ordered[i].Priority) > priorityWeightPercent(ordered[j].Priority)
-	})
-	var needs []flexNeed
-	for _, d := range ordered {
-		if d.Blocked {
-			continue
-		}
-		if _, isWin := windowByID[d.Option.ExternalID]; isWin {
-			continue
-		}
-		remaining := defaultFocusMin
-		if d.EffortMin != nil && *d.EffortMin > 0 {
-			remaining = *d.EffortMin
-		}
-		remaining -= pinnedMinutes[d.Option.ExternalID]
-		if remaining <= 0 {
-			continue
-		}
-		poms := (remaining + avgFocusMin/2) / avgFocusMin
-		if poms < 1 {
-			poms = 1
-		}
-		needs = append(needs, flexNeed{
-			task:      d.Option,
-			remaining: remaining,
-			slots:     poms,
-			weight:    poms * priorityWeightPercent(d.Priority),
-		})
-	}
-
-	committedSlots := total
-	var freeMain []int
-	for i := 0; i < total; i++ {
-		if _, ok := pinned[i]; ok {
-			continue
-		}
-		if windowAt[i] != "" {
-			continue
-		}
-		freeMain = append(freeMain, i)
-	}
-
-	mainQuota := shareByWeight(len(freeMain), needs, func(n flexNeed) int { return n.weight })
-
-	assign := map[int]tasksclient.TaskOption{}
-	pos := 0
-	for i := range needs {
-		for k := 0; k < mainQuota[i] && pos < len(freeMain); k++ {
-			assign[freeMain[pos]] = needs[i].task
-			pos++
-		}
-	}
-
-	var tail []tasksclient.TaskOption
-	if committed > 0 {
-		for i, n := range needs {
-			for k := mainQuota[i]; k < n.slots && len(tail) < maxOverflowSlots; k++ {
-				tail = append(tail, n.task)
-			}
-		}
-	}
-	for i, t := range tail {
-		assign[total+i] = t
-	}
-	total += len(tail)
-
-	out := make([]models.PlanSlot, 0, total)
-	for i := 0; i < total; i++ {
-		if sl, ok := pinned[i]; ok {
-			out = append(out, sl)
-			continue
-		}
-		sl := models.PlanSlot{Date: date, Idx: i}
-		if sh, ok := layout.shapeAt(i); ok {
-			sl.FocusSeconds = minToSec(&sh.focus)
-			sl.BreakSeconds = minToSec(&sh.brk)
-		}
-		if preset != nil && i < len(preset.Slots) {
-			sl.FocusSeconds = minToSec(&preset.Slots[i].FocusMinutes)
-			sl.BreakSeconds = minToSec(&preset.Slots[i].BreakMinutes)
-		}
-		if id := windowAt[i]; id != "" && i < committedSlots {
-			t := windowByID[id]
-			sl.SetTask(&models.TaskRef{Source: t.Source, ExternalID: t.ExternalID, TitleSnapshot: t.Title})
-			out = append(out, sl)
-			continue
-		}
-		if t, ok := assign[i]; ok {
-			sl.SetTask(&models.TaskRef{Source: t.Source, ExternalID: t.ExternalID, TitleSnapshot: t.Title})
-		}
-		out = append(out, sl)
-	}
-	return out
 }
 
 const maxOverflowSlots = 40
@@ -992,49 +848,4 @@ type flexNeed struct {
 	remaining int
 	slots     int
 	weight    int
-}
-
-func planWindowPositions(layout *dayLayout, pinned map[int]models.PlanSlot, works map[string]tasksclient.TaskOption, sharePercent int) map[int]string {
-	windowAt := map[int]string{}
-	if layout == nil || len(works) == 0 || sharePercent <= 0 {
-		return windowAt
-	}
-	if sharePercent > 100 {
-		sharePercent = 100
-	}
-	for _, b := range layout.blocks {
-		if b.windowID == "" {
-			continue
-		}
-		if _, ok := works[b.windowID]; !ok {
-			continue
-		}
-		n := b.end - b.start
-		quota := n * sharePercent / 100
-		free := make([]int, 0, n)
-		for i := b.start; i < b.end; i++ {
-			if sl, ok := pinned[i]; ok {
-				if sl.TaskExternalID != nil && *sl.TaskExternalID == b.windowID {
-					quota--
-				}
-				continue
-			}
-			free = append(free, i)
-		}
-		workLeft := quota
-		for fi, pos := range free {
-			if workLeft <= 0 {
-				break
-			}
-			if pos == b.start {
-				continue
-			}
-			otherLeft := len(free) - fi - workLeft
-			if workLeft > otherLeft {
-				windowAt[pos] = b.windowID
-				workLeft--
-			}
-		}
-	}
-	return windowAt
 }

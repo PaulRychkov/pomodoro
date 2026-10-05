@@ -242,8 +242,8 @@ type Settings struct {
 	ShortBreakSeconds    int           `gorm:"not null" json:"short_break_seconds"`
 	LongBreakSeconds     int           `gorm:"not null" json:"long_break_seconds"`
 	DayBlocks            IntList       `gorm:"type:jsonb;not null" json:"day_blocks"`
-	PlanBeforeWindowMin  int           `gorm:"column:plan_before_window_minutes;not null;default:80" json:"plan_before_window_minutes"`
-	PlanAfterWindowMin   int           `gorm:"column:plan_after_window_minutes;not null;default:90" json:"plan_after_window_minutes"`
+	DayStartMin          int           `gorm:"column:day_start_minutes;not null;default:360" json:"day_start_minutes"`
+	DayEndMin            int           `gorm:"column:day_end_minutes;not null;default:1200" json:"day_end_minutes"`
 	WindowSharePercent   int           `gorm:"column:window_share_percent;not null;default:67" json:"window_share_percent"`
 	AutoStartBreak       bool          `gorm:"not null" json:"auto_start_break"`
 	AutoStartFocus       bool          `gorm:"not null" json:"auto_start_focus"`
@@ -256,6 +256,13 @@ type Settings struct {
 
 func (Settings) TableName() string { return "settings" }
 
+// Границы активного дня по умолчанию: 06:00–20:00. Помидоры плана
+// раскладываются только внутри этого окна.
+const (
+	DefaultDayStartMin = 6 * 60
+	DefaultDayEndMin   = 20 * 60
+)
+
 func DefaultSettings() Settings {
 	return Settings{
 		ID:                   1,
@@ -263,8 +270,8 @@ func DefaultSettings() Settings {
 		ShortBreakSeconds:    300,
 		LongBreakSeconds:     900,
 		DayBlocks:            IntList{4, 4},
-		PlanBeforeWindowMin:  80,
-		PlanAfterWindowMin:   90,
+		DayStartMin:          DefaultDayStartMin,
+		DayEndMin:            DefaultDayEndMin,
 		WindowSharePercent:   67,
 		AutoStartBreak:       false,
 		AutoStartFocus:       false,
@@ -305,16 +312,28 @@ func (s Session) TaskRef() *TaskRef {
 }
 
 type PlanSlot struct {
-	Date           string    `gorm:"primaryKey" json:"date"`
-	Idx            int       `gorm:"primaryKey" json:"idx"`
-	TaskSource     *string   `json:"task_source"`
-	TaskExternalID *string   `json:"task_external_id"`
-	TaskTitle      *string   `json:"task_title"`
-	Label          *string   `json:"label"`
-	FocusSeconds   *int      `json:"focus_seconds"`
-	BreakSeconds   *int      `json:"break_seconds"`
-	Pinned         bool      `gorm:"not null;default:false" json:"pinned"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	Date           string  `gorm:"primaryKey" json:"date"`
+	Idx            int     `gorm:"primaryKey" json:"idx"`
+	TaskSource     *string `json:"task_source"`
+	TaskExternalID *string `json:"task_external_id"`
+	TaskTitle      *string `json:"task_title"`
+	Label          *string `json:"label"`
+	FocusSeconds   *int    `json:"focus_seconds"`
+	BreakSeconds   *int    `json:"break_seconds"`
+	Pinned         bool    `gorm:"not null;default:false" json:"pinned"`
+	// Длительности фокуса/перерыва заданы вручную и переживают пересборку плана.
+	PinnedFocus bool `gorm:"column:pinned_focus;not null;default:false" json:"pinned_focus"`
+	PinnedBreak bool `gorm:"column:pinned_break;not null;default:false" json:"pinned_break"`
+	// Плановое время начала слота и период дня, в который он уложен
+	// (минуты от полуночи). Слот никогда не выходит за границы своего периода.
+	StartMin       *int    `gorm:"column:start_minutes" json:"start_minutes"`
+	PeriodStartMin *int    `gorm:"column:period_start_minutes" json:"period_start_minutes"`
+	PeriodEndMin   *int    `gorm:"column:period_end_minutes" json:"period_end_minutes"`
+	WindowID       *string `gorm:"column:window_id" json:"window_id"`
+	WindowTitle    *string `gorm:"column:window_title" json:"window_title"`
+	// Overflow — помидор задачи, которому не нашлось места в активном дне.
+	Overflow  bool      `gorm:"not null;default:false" json:"overflow"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func (PlanSlot) TableName() string { return "plan_slots" }

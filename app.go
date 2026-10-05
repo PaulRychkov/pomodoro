@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ncruces/go-sqlite3/gormlite"
-	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/google/uuid"
+	_ "github.com/ncruces/go-sqlite3/embed"
+	"github.com/ncruces/go-sqlite3/gormlite"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -67,19 +67,31 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.engine.SetNotifier(func(st engine.State, reason string) {
 		runtime.EventsEmit(a.ctx, "pomodoro:state", StatePush{State: st, Reason: reason})
-		if reason == "completed" && st.NextPhase != engine.PhaseFocus {
+		// уведомитель работает под мьютексом движка: план трогаем только в горутине
+		switch reason {
+		case "completed":
+			focusDone := st.NextPhase != engine.PhaseFocus
 			go func() {
-				taskID, closed, err := a.plan.HandleFocusCompleted(context.Background())
-				if err != nil {
-					a.log.Warn("автозакрытие вхождения", zap.Error(err))
-					return
+				if focusDone {
+					taskID, closed, err := a.plan.HandleFocusCompleted(context.Background())
+					if err != nil {
+						a.log.Warn("автозакрытие вхождения", zap.Error(err))
+					} else if closed {
+						a.log.Info("все помидоры задачи выполнены, вхождение закрыто", zap.String("task", taskID))
+					}
 				}
-				if closed {
-					a.log.Info("все помидоры задачи выполнены, вхождение закрыто", zap.String("task", taskID))
-				}
+				a.refreshPlan(false)
 			}()
+		case "day_rolled", "started", "stopped":
+			go a.refreshPlan(false)
 		}
 	})
+}
+
+func (a *App) refreshPlan(rebuild bool) {
+	if _, err := a.plan.Day(context.Background(), rebuild); err != nil {
+		a.log.Warn("обновление плана дня", zap.Error(err))
+	}
 }
 
 func openStore(dbCfg config.Database) (store.Store, error) {
@@ -137,6 +149,8 @@ func (a *App) initBackend() error {
 		Completed: func() int { return eng.Snapshot().CompletedToday },
 	}
 	eng.SetDurationProvider(a.plan.SlotDurations)
+	eng.SetBlocksProvider(a.plan.Blocks)
+	go a.refreshPlan(false)
 
 	h := handler.New(eng, st, a.plan, a.log)
 	if db := store.DBOf(st); db != nil {
@@ -237,6 +251,9 @@ func (a *App) SaveSettings(s models.Settings) (models.Settings, error) {
 	saved, err := a.engine.UpdateSettings(a.ctx, s)
 	if err != nil {
 		return models.Settings{}, err
+	}
+	if _, err := a.plan.Day(a.ctx, true); err != nil {
+		a.log.Warn("пересборка плана после смены настроек", zap.Error(err))
 	}
 	a.mu.Lock()
 	overlay := a.overlay

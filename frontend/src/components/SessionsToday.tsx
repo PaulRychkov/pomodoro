@@ -37,6 +37,8 @@ function CreditBadge({ session }: { session: Session }) {
   const full = value === 12;
   return (
     <span
+      data-testid="session-credit"
+      data-twelfths={value}
       className={
         "min-w-[1.75rem] rounded-md px-1.5 py-0.5 text-center text-xs font-semibold tabular-nums " +
         (full ? "bg-success/15 text-success" : value === 0 ? "bg-slate-100 text-muted" : "bg-primary/15 text-primary-dark")
@@ -94,24 +96,45 @@ export default function SessionsToday({ version }: SessionsTodayProps) {
   };
 
   return (
-    <div className="rounded-2xl bg-surface p-3 shadow-sm sm:p-5">
+    <div data-testid="sessions-today" className="rounded-2xl bg-surface p-3 shadow-sm sm:p-5">
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Помидоры сегодня</h2>
-      {error && <p className="mb-2 text-xs text-danger">{error}</p>}
+      {error && (
+        <p data-testid="sessions-error" className="mb-2 text-xs text-danger">
+          {error}
+        </p>
+      )}
       {sessions.length === 0 ? (
-        <p className="text-sm text-muted">Пока пусто — запустите первый помидор.</p>
+        <p data-testid="sessions-empty" className="text-sm text-muted">
+          Пока пусто — запустите первый помидор.
+        </p>
       ) : (
         <ul className="space-y-2">
           {sessions.map((s) => (
-            <li key={s.id} className="rounded-xl border border-slate-100 px-3 py-2">
+            <li
+              key={s.id}
+              data-testid="session-row"
+              data-id={s.id}
+              data-outcome={s.outcome ?? ""}
+              className="rounded-xl border border-slate-100 px-3 py-2"
+            >
               <div className="flex items-center gap-3">
                 <OutcomeIcon outcome={s.outcome} />
-                <span className="w-12 text-sm tabular-nums text-muted">{fmtTime(s.started_at)}</span>
-                <span className="flex-1 truncate text-sm">{bindingText(s)}</span>
-                <span className="text-xs tabular-nums text-muted" title="Точное время фокуса без пауз">
+                <span data-testid="session-time" className="w-12 text-sm tabular-nums text-muted">
+                  {fmtTime(s.started_at)}
+                </span>
+                <span data-testid="session-title" className="flex-1 truncate text-sm">
+                  {bindingText(s)}
+                </span>
+                <span
+                  data-testid="session-duration"
+                  className="text-xs tabular-nums text-muted"
+                  title="Точное время фокуса без пауз"
+                >
                   {formatDuration(focusSeconds(s))}
                 </span>
                 <CreditBadge session={s} />
                 <button
+                  data-testid="session-relabel"
                   className="text-muted hover:text-primary-dark"
                   title="Изменить привязку"
                   onClick={() => setEditing(editing === s.id ? null : s.id)}
@@ -120,7 +143,7 @@ export default function SessionsToday({ version }: SessionsTodayProps) {
                 </button>
               </div>
               {editing === s.id && (
-                <div className="mt-2 border-t border-slate-100 pt-2">
+                <div data-testid="session-relabel-panel" className="mt-2 border-t border-slate-100 pt-2">
                   <BindingPicker compact value={{ label: null, task: null }} onChange={(b) => save(s.id, b)} />
                 </div>
               )}

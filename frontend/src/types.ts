@@ -20,6 +20,8 @@ export interface State {
   paused_at: string | null;
   paused_total_seconds: number;
   planned_seconds: number;
+  /** В idle — длительность следующей сессии по плану дня; в активной фазе равна planned_seconds. */
+  next_planned_seconds: number;
   remaining_seconds: number;
   label: string | null;
   task: TaskRef | null;
@@ -56,8 +58,10 @@ export interface Settings {
   short_break_seconds: number;
   long_break_seconds: number;
   day_blocks: number[];
-  plan_before_window_minutes: number;
-  plan_after_window_minutes: number;
+  /** Начало активного дня, минуты от полуночи (по умолчанию 360 = 06:00). */
+  day_start_minutes: number;
+  /** Конец активного дня, минуты от полуночи (по умолчанию 1200 = 20:00). */
+  day_end_minutes: number;
   window_share_percent: number;
   auto_start_break: boolean;
   auto_start_focus: boolean;
@@ -107,8 +111,17 @@ export interface PlanSlot {
   task: TaskRef | null;
   label: string | null;
   focus_minutes: number | null;
+  /** Проекция начала помидора, минуты от полуночи; null — у слота нет места в дне. */
   start_minutes: number | null;
+  /** Проекция конца фокуса, минуты от полуночи. */
+  end_minutes: number | null;
   break_minutes: number | null;
+  /** Период дня, которому принадлежит слот: свободное время между событиями либо окно. */
+  period_start_minutes: number | null;
+  period_end_minutes: number | null;
+  /** Не null, если слот лежит внутри окна — события с фиксированным временем (например «Работа»). */
+  window_id: string | null;
+  window_title: string | null;
   pinned: boolean;
   done: boolean;
   overflow: boolean;

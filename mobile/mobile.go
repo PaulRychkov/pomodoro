@@ -87,15 +87,30 @@ func Start(dataDir, tasksURL, syncURL, syncToken string) string {
 		Completed: func() int { return eng.Snapshot().CompletedToday },
 	}
 	eng.SetDurationProvider(planSvc.SlotDurations)
+	eng.SetBlocksProvider(planSvc.Blocks)
+	refreshPlan := func() {
+		if _, err := planSvc.Day(context.Background(), false); err != nil {
+			log.Warn("обновление плана дня", zap.Error(err))
+		}
+	}
+	// уведомитель работает под мьютексом движка: план трогаем только в горутине
 	eng.SetNotifier(func(st engine.State, reason string) {
-		if reason == "completed" && st.NextPhase != engine.PhaseFocus {
+		switch reason {
+		case "completed":
+			focusDone := st.NextPhase != engine.PhaseFocus
 			go func() {
-				if _, _, err := planSvc.HandleFocusCompleted(context.Background()); err != nil {
-					log.Warn("автозакрытие вхождения", zap.Error(err))
+				if focusDone {
+					if _, _, err := planSvc.HandleFocusCompleted(context.Background()); err != nil {
+						log.Warn("автозакрытие вхождения", zap.Error(err))
+					}
 				}
+				refreshPlan()
 			}()
+		case "day_rolled", "started", "stopped":
+			go refreshPlan()
 		}
 	})
+	go refreshPlan()
 
 	static, err := fs.Sub(webFS, "webdist")
 	if err != nil {

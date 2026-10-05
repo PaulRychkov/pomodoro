@@ -25,7 +25,7 @@ export default function Overlay({ state, remaining, settings }: OverlayProps) {
   const hint = isBreak ? "Перерыв" : taskTitle ?? "Фокус";
 
   return (
-    <div className="draggable group flex h-screen w-screen select-none items-center justify-center">
+    <div data-testid="overlay" className="draggable group flex h-screen w-screen select-none items-center justify-center">
       <div
         className="draggable relative"
         style={{ width: o.size, height: o.size }}
@@ -37,7 +37,7 @@ export default function Overlay({ state, remaining, settings }: OverlayProps) {
         </div>
         {active && taskTitle && (
           <div className="pointer-events-none absolute inset-x-1 top-1 flex justify-center opacity-0 transition group-hover:opacity-100">
-            <span className="max-w-full truncate rounded bg-slate-800/85 px-1.5 py-0.5 text-[10px] font-medium text-white">
+            <span data-testid="overlay-task" className="max-w-full truncate rounded bg-slate-800/85 px-1.5 py-0.5 text-[10px] font-medium text-white">
               {taskTitle}
             </span>
           </div>
@@ -48,6 +48,7 @@ export default function Overlay({ state, remaining, settings }: OverlayProps) {
             style={{ opacity: o.digits_opacity }}
           >
             <span
+              data-testid="overlay-digits"
               className="font-semibold tabular-nums"
               style={{
                 fontSize: o.digits_size,
@@ -64,6 +65,7 @@ export default function Overlay({ state, remaining, settings }: OverlayProps) {
           <div className="no-drag absolute inset-x-0 bottom-1 flex justify-center gap-2 opacity-0 transition group-hover:opacity-100">
             <div className="flex gap-2" style={{ opacity: o.buttons_opacity }}>
               <button
+                data-testid="overlay-btn-pause"
                 className="rounded-full bg-slate-800/80 p-1.5 text-white hover:bg-primary"
                 onClick={() => void (state.paused ? api.resume() : api.pause())}
               >
@@ -71,6 +73,7 @@ export default function Overlay({ state, remaining, settings }: OverlayProps) {
               </button>
               {state.phase === "focus" && (
                 <button
+                  data-testid="overlay-btn-complete"
                   className="rounded-full bg-slate-800/80 p-1.5 text-white hover:bg-primary"
                   title="Завершить с частичным зачётом"
                   onClick={() => void api.stop("completed")}
@@ -79,6 +82,7 @@ export default function Overlay({ state, remaining, settings }: OverlayProps) {
                 </button>
               )}
               <button
+                data-testid="overlay-btn-stop"
                 className="rounded-full bg-slate-800/80 p-1.5 text-white hover:bg-danger"
                 title="Стоп без зачёта"
                 onClick={() => void api.stop("")}

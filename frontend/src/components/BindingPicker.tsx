@@ -41,11 +41,15 @@ export default function BindingPicker({ value, onChange, compact = false }: Bind
 
   if (selectedText) {
     return (
-      <div className="flex items-center gap-2">
-        <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-sm text-primary-dark">
+      <div data-testid="binding-picker" className="flex items-center gap-2">
+        <span
+          data-testid="binding-selected"
+          className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-sm text-primary-dark"
+        >
           {value.task ? <ListTodo size={14} /> : <Tag size={14} />}
           <span className="max-w-56 truncate">{selectedText}</span>
           <button
+            data-testid="binding-clear"
             className="text-muted hover:text-danger"
             onClick={() => onChange({ label: null, task: null })}
             title="Убрать привязку"
@@ -58,9 +62,10 @@ export default function BindingPicker({ value, onChange, compact = false }: Bind
   }
 
   return (
-    <div className={compact ? "space-y-2" : "space-y-3"}>
+    <div data-testid="binding-picker" className={compact ? "space-y-2" : "space-y-3"}>
       <div className="flex gap-1 rounded-xl bg-canvas p-1">
         <button
+          data-testid="binding-mode-label"
           className={
             "flex-1 rounded-lg px-3 py-1.5 text-sm transition " +
             (mode === "label" ? "bg-surface shadow text-ink" : "text-muted hover:text-ink")
@@ -70,6 +75,7 @@ export default function BindingPicker({ value, onChange, compact = false }: Bind
           Метка
         </button>
         <button
+          data-testid="binding-mode-task"
           className={
             "flex-1 rounded-lg px-3 py-1.5 text-sm transition " +
             (mode === "task" ? "bg-surface shadow text-ink" : "text-muted hover:text-ink")
@@ -81,6 +87,7 @@ export default function BindingPicker({ value, onChange, compact = false }: Bind
       </div>
       {mode === "label" ? (
         <input
+          data-testid="binding-label-input"
           className="w-full rounded-xl border border-slate-200 bg-surface px-3 py-2 text-sm outline-none focus:border-primary"
           placeholder="Чем займётесь? (Enter — сохранить)"
           onKeyDown={(e) => {
@@ -93,13 +100,16 @@ export default function BindingPicker({ value, onChange, compact = false }: Bind
       ) : (
         <div className="space-y-2">
           <input
+            data-testid="binding-search"
             className="w-full rounded-xl border border-slate-200 bg-surface px-3 py-2 text-sm outline-none focus:border-primary"
             placeholder="Поиск задачи..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
           {searchError ? (
-            <p className="text-xs text-danger">{searchError}</p>
+            <p data-testid="binding-search-error" className="text-xs text-danger">
+              {searchError}
+            </p>
           ) : searching ? (
             <p className="text-xs text-muted">Ищу...</p>
           ) : (
@@ -107,6 +117,8 @@ export default function BindingPicker({ value, onChange, compact = false }: Bind
               {options.map((o) => (
                 <li key={o.source + o.external_id}>
                   <button
+                    data-testid="binding-option"
+                    data-id={o.external_id}
                     className="w-full rounded-lg px-3 py-1.5 text-left text-sm hover:bg-primary/10"
                     onClick={() =>
                       onChange({
@@ -119,7 +131,11 @@ export default function BindingPicker({ value, onChange, compact = false }: Bind
                   </button>
                 </li>
               ))}
-              {options.length === 0 && <li className="px-3 py-1.5 text-xs text-muted">Ничего не найдено</li>}
+              {options.length === 0 && (
+                <li data-testid="binding-empty" className="px-3 py-1.5 text-xs text-muted">
+                  Ничего не найдено
+                </li>
+              )}
             </ul>
           )}
         </div>

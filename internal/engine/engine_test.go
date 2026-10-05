@@ -796,3 +796,207 @@ func TestUpdateSettingsRecalculatesNextBreak(t *testing.T) {
 		t.Fatalf("next after reconfigure = %s, want long_break", st.NextPhase)
 	}
 }
+
+func intPtr(v int) *int { return &v }
+
+func completeFocusNow(t *testing.T, e *Engine, clock *fakeClock) {
+	t.Helper()
+	st, err := e.StartFocus(context.Background(), Binding{})
+	if err != nil {
+		t.Fatalf("start focus: %v", err)
+	}
+	clock.Advance(time.Duration(st.PlannedSeconds+1) * time.Second)
+	if err := e.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+}
+
+func completeBreakNow(t *testing.T, e *Engine, clock *fakeClock) State {
+	t.Helper()
+	st, err := e.StartBreak(context.Background())
+	if err != nil {
+		t.Fatalf("start break: %v", err)
+	}
+	clock.Advance(time.Duration(st.PlannedSeconds+1) * time.Second)
+	if err := e.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	return st
+}
+
+func TestIdleSnapshotNextPlannedSecondsFollowsPlan(t *testing.T) {
+	e, _, clock := newTestEngine(t, nil)
+	e.SetDurationProvider(func(idx int) (*int, *int) {
+		switch idx {
+		case 0:
+			return intPtr(600), intPtr(120)
+		case 1:
+			return intPtr(900), nil
+		}
+		return nil, nil
+	})
+	if st := e.Snapshot(); st.NextPhase != PhaseFocus || st.NextPlannedSeconds != 600 {
+		t.Fatalf("idle: next=%s planned=%d, want focus 600", st.NextPhase, st.NextPlannedSeconds)
+	}
+	st, err := e.StartFocus(context.Background(), Binding{})
+	if err != nil {
+		t.Fatalf("start focus: %v", err)
+	}
+	if st.PlannedSeconds != 600 || st.NextPlannedSeconds != 600 {
+		t.Fatalf("active: planned=%d next_planned=%d, want 600 600", st.PlannedSeconds, st.NextPlannedSeconds)
+	}
+	clock.Advance(601 * time.Second)
+	if err := e.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	st = e.Snapshot()
+	if st.NextPhase != PhaseShortBreak || st.NextPlannedSeconds != 120 {
+		t.Fatalf("after focus: next=%s planned=%d, want short_break 120 (break of slot 0)", st.NextPhase, st.NextPlannedSeconds)
+	}
+	if got := completeBreakNow(t, e, clock); got.PlannedSeconds != 120 {
+		t.Fatalf("break planned = %d, want 120", got.PlannedSeconds)
+	}
+	st = e.Snapshot()
+	if st.NextPhase != PhaseFocus || st.NextPlannedSeconds != 900 {
+		t.Fatalf("after break: next=%s planned=%d, want focus 900 (slot 1)", st.NextPhase, st.NextPlannedSeconds)
+	}
+}
+
+func TestSnapshotFallsBackToSettingsWithoutProviders(t *testing.T) {
+	provs := map[string]func(*Engine){
+		"nil providers": func(*Engine) {},
+		"empty providers": func(e *Engine) {
+			e.SetDurationProvider(func(int) (*int, *int) { return nil, nil })
+			e.SetBlocksProvider(func() []int { return nil })
+		},
+	}
+	for name, setup := range provs {
+		t.Run(name, func(t *testing.T) {
+			e, _, clock := newTestEngine(t, func(s *models.Settings) {
+				s.FocusDurationSeconds = 60
+				s.ShortBreakSeconds = 30
+				s.LongBreakSeconds = 90
+				s.DayBlocks = models.IntList{2, 3}
+			})
+			setup(e)
+			st := e.Snapshot()
+			if st.NextPlannedSeconds != 60 || st.DayTotal != 5 || st.BlockSize != 2 ||
+				len(st.DayBlocks) != 2 || st.DayBlocks[1] != 3 {
+				t.Fatalf("idle: planned=%d total=%d block_size=%d blocks=%v, want 60 5 2 [2 3]",
+					st.NextPlannedSeconds, st.DayTotal, st.BlockSize, st.DayBlocks)
+			}
+			completeFocusNow(t, e, clock)
+			if st := e.Snapshot(); st.NextPhase != PhaseShortBreak || st.NextPlannedSeconds != 30 {
+				t.Fatalf("after 1st: next=%s planned=%d, want short_break 30", st.NextPhase, st.NextPlannedSeconds)
+			}
+			completeBreakNow(t, e, clock)
+			completeFocusNow(t, e, clock)
+			if st := e.Snapshot(); st.NextPhase != PhaseLongBreak || st.NextPlannedSeconds != 90 {
+				t.Fatalf("after 2nd: next=%s planned=%d, want long_break 90", st.NextPhase, st.NextPlannedSeconds)
+			}
+		})
+	}
+}
+
+func TestBlocksProviderDrivesDayStructure(t *testing.T) {
+	e, _, clock := newTestEngine(t, func(s *models.Settings) {
+		s.FocusDurationSeconds = 60
+		s.ShortBreakSeconds = 30
+		s.LongBreakSeconds = 90
+		s.DayBlocks = models.IntList{4, 4}
+	})
+	e.SetBlocksProvider(func() []int { return []int{2, 1, 3} })
+
+	st := e.Snapshot()
+	if st.DayTotal != 6 || st.BlockSize != 2 || st.DayComplete {
+		t.Fatalf("idle: total=%d block_size=%d complete=%v, want 6 2 false", st.DayTotal, st.BlockSize, st.DayComplete)
+	}
+	if len(st.DayBlocks) != 3 || st.DayBlocks[0] != 2 || st.DayBlocks[1] != 1 || st.DayBlocks[2] != 3 {
+		t.Fatalf("day_blocks = %v, want [2 1 3]", st.DayBlocks)
+	}
+
+	completeFocusNow(t, e, clock)
+	if st := e.Snapshot(); st.NextPhase != PhaseShortBreak {
+		t.Fatalf("after 1st: next=%s, want short_break", st.NextPhase)
+	}
+	completeBreakNow(t, e, clock)
+
+	completeFocusNow(t, e, clock)
+	st = e.Snapshot()
+	if st.NextPhase != PhaseLongBreak || st.BlockIndex != 1 || st.PosInBlock != 0 || st.BlockSize != 1 {
+		t.Fatalf("after 2nd: next=%s block=%d pos=%d size=%d, want long_break 1 0 1",
+			st.NextPhase, st.BlockIndex, st.PosInBlock, st.BlockSize)
+	}
+	completeBreakNow(t, e, clock)
+
+	completeFocusNow(t, e, clock)
+	if st := e.Snapshot(); st.NextPhase != PhaseLongBreak {
+		t.Fatalf("after 3rd: next=%s, want long_break (block of one)", st.NextPhase)
+	}
+	completeBreakNow(t, e, clock)
+
+	for i := 0; i < 3; i++ {
+		completeFocusNow(t, e, clock)
+		completeBreakNow(t, e, clock)
+	}
+	if st := e.Snapshot(); !st.DayComplete || st.CompletedToday != 6 {
+		t.Fatalf("complete=%v count=%d, want true 6", st.DayComplete, st.CompletedToday)
+	}
+}
+
+func TestPlanRebuildChangesPendingBreakKind(t *testing.T) {
+	e, _, clock := newTestEngine(t, func(s *models.Settings) {
+		s.FocusDurationSeconds = 60
+		s.DayBlocks = models.IntList{4, 4}
+	})
+	blocks := []int{4}
+	e.SetBlocksProvider(func() []int { return blocks })
+	completeFocusNow(t, e, clock)
+	if st := e.Snapshot(); st.NextPhase != PhaseShortBreak {
+		t.Fatalf("next = %s, want short_break", st.NextPhase)
+	}
+	blocks = []int{1, 3}
+	if st := e.Snapshot(); st.NextPhase != PhaseLongBreak {
+		t.Fatalf("next after plan rebuild = %s, want long_break", st.NextPhase)
+	}
+}
+
+func TestManualBreakWithoutFinishedFocusIsLabelledBySlot(t *testing.T) {
+	e, _, clock := newTestEngine(t, func(s *models.Settings) {
+		s.FocusDurationSeconds = 60
+		s.ShortBreakSeconds = 30
+		s.LongBreakSeconds = 90
+		s.DayBlocks = models.IntList{4, 4}
+	})
+	// нет завершённых помидоров: перерыв короткий
+	st, err := e.StartBreak(context.Background())
+	if err != nil {
+		t.Fatalf("start break: %v", err)
+	}
+	if st.Phase != PhaseShortBreak || st.PlannedSeconds != 30 {
+		t.Fatalf("no focus yet: phase=%s planned=%d, want short_break 30", st.Phase, st.PlannedSeconds)
+	}
+	if _, err := e.Stop(context.Background(), ""); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+
+	e.SetDurationProvider(func(idx int) (*int, *int) {
+		if idx == 0 {
+			return nil, intPtr(90)
+		}
+		return nil, nil
+	})
+	completeFocusNow(t, e, clock)
+	completeBreakNow(t, e, clock)
+	if st := e.Snapshot(); st.NextPhase != PhaseFocus {
+		t.Fatalf("after break: next=%s, want focus", st.NextPhase)
+	}
+	// ещё один перерыв по желанию: слот 0 длинный, вид и длительность — long
+	st, err = e.StartBreak(context.Background())
+	if err != nil {
+		t.Fatalf("start extra break: %v", err)
+	}
+	if st.Phase != PhaseLongBreak || st.PlannedSeconds != 90 {
+		t.Fatalf("extra break: phase=%s planned=%d, want long_break 90", st.Phase, st.PlannedSeconds)
+	}
+}

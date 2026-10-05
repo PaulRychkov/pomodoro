@@ -43,6 +43,7 @@ export namespace engine {
 	    paused_at?: any;
 	    paused_total_seconds: number;
 	    planned_seconds: number;
+	    next_planned_seconds: number;
 	    remaining_seconds: number;
 	    label?: string;
 	    task?: models.TaskRef;
@@ -71,6 +72,7 @@ export namespace engine {
 	        this.paused_at = this.convertValues(source["paused_at"], null);
 	        this.paused_total_seconds = source["paused_total_seconds"];
 	        this.planned_seconds = source["planned_seconds"];
+	        this.next_planned_seconds = source["next_planned_seconds"];
 	        this.remaining_seconds = source["remaining_seconds"];
 	        this.label = source["label"];
 	        this.task = this.convertValues(source["task"], models.TaskRef);
@@ -306,8 +308,8 @@ export namespace models {
 	    short_break_seconds: number;
 	    long_break_seconds: number;
 	    day_blocks: number[];
-	    plan_before_window_minutes: number;
-	    plan_after_window_minutes: number;
+	    day_start_minutes: number;
+	    day_end_minutes: number;
 	    window_share_percent: number;
 	    auto_start_break: boolean;
 	    auto_start_focus: boolean;
@@ -325,8 +327,8 @@ export namespace models {
 	        this.short_break_seconds = source["short_break_seconds"];
 	        this.long_break_seconds = source["long_break_seconds"];
 	        this.day_blocks = source["day_blocks"];
-	        this.plan_before_window_minutes = source["plan_before_window_minutes"];
-	        this.plan_after_window_minutes = source["plan_after_window_minutes"];
+	        this.day_start_minutes = source["day_start_minutes"];
+	        this.day_end_minutes = source["day_end_minutes"];
 	        this.window_share_percent = source["window_share_percent"];
 	        this.auto_start_break = source["auto_start_break"];
 	        this.auto_start_focus = source["auto_start_focus"];
@@ -437,6 +439,11 @@ export namespace plan {
 	    focus_minutes?: number;
 	    break_minutes?: number;
 	    start_minutes?: number;
+	    end_minutes?: number;
+	    period_start_minutes?: number;
+	    period_end_minutes?: number;
+	    window_id?: string;
+	    window_title?: string;
 	    pinned: boolean;
 	    done: boolean;
 	    overflow: boolean;
@@ -453,6 +460,11 @@ export namespace plan {
 	        this.focus_minutes = source["focus_minutes"];
 	        this.break_minutes = source["break_minutes"];
 	        this.start_minutes = source["start_minutes"];
+	        this.end_minutes = source["end_minutes"];
+	        this.period_start_minutes = source["period_start_minutes"];
+	        this.period_end_minutes = source["period_end_minutes"];
+	        this.window_id = source["window_id"];
+	        this.window_title = source["window_title"];
 	        this.pinned = source["pinned"];
 	        this.done = source["done"];
 	        this.overflow = source["overflow"];

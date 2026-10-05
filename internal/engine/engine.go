@@ -75,21 +75,31 @@ type State struct {
 	RemainingSeconds int             `json:"remaining_seconds"`
 	Label            *string         `json:"label"`
 	Task             *models.TaskRef `json:"task"`
-	CompletedToday   int             `json:"completed_today"`
-	CreditToday      float64         `json:"credit_today"`
-	DayBlocks        []int           `json:"day_blocks"`
-	BlockIndex       int             `json:"block_index"`
-	PosInBlock       int             `json:"pos_in_block"`
-	BlockSize        int             `json:"block_size"`
-	DayTotal         int             `json:"day_total"`
-	DayComplete      bool            `json:"day_complete"`
-	SoundEnabled     bool            `json:"sound_enabled"`
-	SettingsStamp    string          `json:"settings_stamp"`
+	// NextPlannedSeconds — длительность того, что стартует следующим: у idle —
+	// фокус слота или запланированный перерыв (по NextPhase), у активной
+	// сессии равна PlannedSeconds.
+	NextPlannedSeconds int     `json:"next_planned_seconds"`
+	CompletedToday     int     `json:"completed_today"`
+	CreditToday        float64 `json:"credit_today"`
+	DayBlocks          []int   `json:"day_blocks"`
+	BlockIndex         int     `json:"block_index"`
+	PosInBlock         int     `json:"pos_in_block"`
+	BlockSize          int     `json:"block_size"`
+	DayTotal           int     `json:"day_total"`
+	DayComplete        bool    `json:"day_complete"`
+	SoundEnabled       bool    `json:"sound_enabled"`
+	SettingsStamp      string  `json:"settings_stamp"`
 }
 
 type Notifier func(state State, reason string)
 
+// DurationProvider и BlocksProvider вызываются под мьютексом движка: они не
+// должны обращаться к методам Engine (иначе взаимная блокировка).
 type DurationProvider func(pomodoroIdx int) (focusSeconds, breakSeconds *int)
+
+// BlocksProvider отдаёт размеры блоков сегодняшнего плана дня; пустой результат —
+// план не построен, тогда структура дня берётся из settings.DayBlocks.
+type BlocksProvider func() []int
 
 type Engine struct {
 	mu             sync.Mutex
@@ -97,6 +107,7 @@ type Engine struct {
 	clock          Clock
 	notify         Notifier
 	durations      DurationProvider
+	blocks         BlocksProvider
 	settings       models.Settings
 	active         *models.Session
 	nextPhase      Phase
@@ -128,6 +139,12 @@ func (e *Engine) SetDurationProvider(p DurationProvider) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.durations = p
+}
+
+func (e *Engine) SetBlocksProvider(p BlocksProvider) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.blocks = p
 }
 
 func (e *Engine) Init(ctx context.Context) error {
@@ -171,7 +188,48 @@ func (e *Engine) breakPhaseForLocked(completed int) Phase {
 			return PhaseShortBreak
 		}
 	}
-	return breakPhaseAfter(e.settings.DayBlocks, completed)
+	return breakPhaseAfter(e.dayBlocksLocked(), completed)
+}
+
+func (e *Engine) dayBlocksLocked() []int {
+	if e.blocks != nil {
+		if b := e.blocks(); len(b) > 0 {
+			return b
+		}
+	}
+	return e.settings.DayBlocks
+}
+
+// refreshNextBreakLocked пересчитывает вид перерыва в ожидании: план дня
+// (а с ним и блоки) мог измениться после того, как перерыв был выбран.
+func (e *Engine) refreshNextBreakLocked() {
+	if e.active == nil && (e.nextPhase == PhaseShortBreak || e.nextPhase == PhaseLongBreak) && e.completedToday > 0 {
+		e.nextPhase = e.breakPhaseForLocked(e.completedToday)
+	}
+}
+
+func (e *Engine) plannedFocusLocked() int {
+	if e.durations != nil {
+		if f, _ := e.durations(e.completedToday); f != nil && *f > 0 {
+			return *f
+		}
+	}
+	return e.settings.FocusDurationSeconds
+}
+
+// plannedBreakLocked — перерыв после последнего завершённого помидора: из слота
+// плана, иначе дефолт настроек по виду перерыва.
+func (e *Engine) plannedBreakLocked(phase Phase) int {
+	planned := e.settings.ShortBreakSeconds
+	if phase == PhaseLongBreak {
+		planned = e.settings.LongBreakSeconds
+	}
+	if e.durations != nil && e.completedToday > 0 {
+		if _, br := e.durations(e.completedToday - 1); br != nil && *br > 0 {
+			planned = *br
+		}
+	}
+	return planned
 }
 
 func settleFocus(s *models.Session, endAt time.Time) {
@@ -278,6 +336,7 @@ func (e *Engine) StartNext(ctx context.Context, b Binding) (State, error) {
 	if e.active != nil {
 		return e.snapshotLocked(), ErrSessionActive
 	}
+	e.refreshNextBreakLocked()
 	if e.nextPhase == PhaseShortBreak || e.nextPhase == PhaseLongBreak {
 		return e.startBreakLocked(ctx)
 	}
@@ -304,17 +363,11 @@ func (e *Engine) startFocusLocked(ctx context.Context, b Binding) (State, error)
 		return e.snapshotLocked(), err
 	}
 	now := e.clock.Now()
-	plannedFocus := e.settings.FocusDurationSeconds
-	if e.durations != nil {
-		if f, _ := e.durations(e.completedToday); f != nil && *f > 0 {
-			plannedFocus = *f
-		}
-	}
 	s := &models.Session{
 		ID:                     uuid.New(),
 		Kind:                   models.KindFocus,
 		StartedAt:              now,
-		PlannedDurationSeconds: plannedFocus,
+		PlannedDurationSeconds: e.plannedFocusLocked(),
 		Label:                  b.Label,
 	}
 	if b.Task != nil {
@@ -345,19 +398,17 @@ func (e *Engine) startBreakLocked(ctx context.Context) (State, error) {
 	if e.active != nil {
 		return e.snapshotLocked(), ErrSessionActive
 	}
+	e.refreshNextBreakLocked()
 	phase := e.nextPhase
 	if phase != PhaseShortBreak && phase != PhaseLongBreak {
+		// перерыв по желанию пользователя без только что завершённого фокуса:
+		// вид и длительность — от слота последнего помидора
 		phase = PhaseShortBreak
-	}
-	planned := e.settings.ShortBreakSeconds
-	if phase == PhaseLongBreak {
-		planned = e.settings.LongBreakSeconds
-	}
-	if e.durations != nil && e.completedToday > 0 {
-		if _, br := e.durations(e.completedToday - 1); br != nil && *br > 0 {
-			planned = *br
+		if e.completedToday > 0 {
+			phase = e.breakPhaseForLocked(e.completedToday)
 		}
 	}
+	planned := e.plannedBreakLocked(phase)
 	now := e.clock.Now()
 	s := &models.Session{
 		ID:                     uuid.New(),
@@ -633,9 +684,7 @@ func (e *Engine) ReloadSettings(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	e.settings = stored
-	if e.active == nil && (e.nextPhase == PhaseShortBreak || e.nextPhase == PhaseLongBreak) && e.completedToday > 0 {
-		e.nextPhase = e.breakPhaseForLocked(e.completedToday)
-	}
+	e.refreshNextBreakLocked()
 	e.notifyLocked("settings")
 	return true, nil
 }
@@ -652,9 +701,7 @@ func (e *Engine) UpdateSettings(ctx context.Context, s models.Settings) (models.
 		return models.Settings{}, err
 	}
 	e.settings = s
-	if e.active == nil && (e.nextPhase == PhaseShortBreak || e.nextPhase == PhaseLongBreak) && e.completedToday > 0 {
-		e.nextPhase = e.breakPhaseForLocked(e.completedToday)
-	}
+	e.refreshNextBreakLocked()
 	e.notifyLocked("settings")
 	return e.settings, nil
 }
@@ -673,6 +720,9 @@ func ValidateSettings(s models.Settings) error {
 	}
 	if len(s.DayBlocks) > 24 {
 		return fmt.Errorf("%w: at most 24 day blocks", ErrInvalidInput)
+	}
+	if s.DayStartMin < 0 || s.DayEndMin > 24*60 || s.DayEndMin-s.DayStartMin < 30 {
+		return fmt.Errorf("%w: active day must be within 00:00..24:00 and last at least 30 minutes", ErrInvalidInput)
 	}
 	if s.Overlay.Size < 60 || s.Overlay.Size > 600 {
 		return fmt.Errorf("%w: overlay size must be 60..600", ErrInvalidInput)
@@ -694,20 +744,22 @@ func ValidateSettings(s models.Settings) error {
 
 func (e *Engine) snapshotLocked() State {
 	now := e.clock.Now()
+	e.refreshNextBreakLocked()
+	blocks := e.dayBlocksLocked()
 	st := State{
 		Phase:          PhaseIdle,
 		NextPhase:      e.nextPhase,
 		CompletedToday: e.completedToday,
 		CreditToday:    float64(e.creditToday*100/models.FullCreditTwelfths) / 100,
-		DayBlocks:      append([]int{}, e.settings.DayBlocks...),
-		DayTotal:       sum(e.settings.DayBlocks),
+		DayBlocks:      append([]int{}, blocks...),
+		DayTotal:       sum(blocks),
 		SoundEnabled:   e.settings.SoundEnabled,
 		SettingsStamp:  e.settings.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
-	block, pos := blockPos(e.settings.DayBlocks, e.completedToday)
+	block, pos := blockPos(blocks, e.completedToday)
 	st.BlockIndex = block
 	st.PosInBlock = pos
-	st.BlockSize = blockSize(e.settings.DayBlocks, block)
+	st.BlockSize = blockSize(blocks, block)
 	st.DayComplete = st.DayTotal > 0 && e.completedToday >= st.DayTotal
 
 	if e.active != nil {
@@ -724,9 +776,14 @@ func (e *Engine) snapshotLocked() State {
 		st.Paused = e.active.PausedAt != nil
 		st.PausedTotal = e.active.PausedTotalSeconds
 		st.PlannedSeconds = e.active.PlannedDurationSeconds
+		st.NextPlannedSeconds = st.PlannedSeconds
 		st.RemainingSeconds = e.active.RemainingSeconds(now)
 		st.Label = e.active.Label
 		st.Task = e.active.TaskRef()
+	} else if e.nextPhase == PhaseFocus {
+		st.NextPlannedSeconds = e.plannedFocusLocked()
+	} else {
+		st.NextPlannedSeconds = e.plannedBreakLocked(e.nextPhase)
 	}
 	return st
 }

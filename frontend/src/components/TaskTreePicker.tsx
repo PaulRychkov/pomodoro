@@ -25,6 +25,7 @@ function TreeRow({ node, depth, onPick }: { node: PickerNode; depth: number; onP
     <div>
       <div className="flex items-center gap-1" style={{ paddingLeft: `${depth * 14}px` }}>
         <button
+          data-testid="picker-toggle"
           className="flex h-5 w-5 shrink-0 items-center justify-center text-muted hover:text-ink disabled:opacity-0"
           onClick={() => setOpen((o) => !o)}
           disabled={!hasKids}
@@ -32,6 +33,9 @@ function TreeRow({ node, depth, onPick }: { node: PickerNode; depth: number; onP
           {hasKids ? (open ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : null}
         </button>
         <button
+          data-testid="picker-node"
+          data-kind={node.kind}
+          data-id={node.bind_task_id || node.id}
           className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-xs hover:bg-primary/10"
           onClick={() => onPick(bindingFor(node))}
           title={isTask ? "Задача — время идёт в неё" : node.bind_task_id ? "Тема — время идёт в общую задачу" : "Тема — как метка"}
@@ -87,28 +91,35 @@ export default function TaskTreePicker({ tree, currentLabel, onPick, onClose }: 
   return (
     <div
       ref={ref}
+      data-testid="task-picker"
       className="absolute left-0 top-full z-30 mt-1 max-h-80 w-72 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl"
     >
       <div className="mb-1 flex items-center justify-between px-1">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">Что делаю</span>
-        <button className="text-muted hover:text-ink" onClick={onClose}>
+        <button data-testid="picker-close" className="text-muted hover:text-ink" onClick={onClose}>
           <X size={14} />
         </button>
       </div>
       <button
+        data-testid="picker-clear"
         className="mb-1 w-full rounded-md px-2 py-1 text-left text-xs text-muted hover:bg-slate-100"
         onClick={() => onPick({ clear_binding: true })}
       >
         — очистить слот
       </button>
       <div className="border-t border-slate-100 pt-1">
-        {tree.length === 0 && <div className="px-2 py-3 text-center text-xs text-muted">Нет задач на сегодня</div>}
+        {tree.length === 0 && (
+          <div data-testid="picker-empty" className="px-2 py-3 text-center text-xs text-muted">
+            Нет задач на сегодня
+          </div>
+        )}
         {tree.map((n) => (
           <TreeRow key={`${n.kind}:${n.id}`} node={n} depth={0} onPick={onPick} />
         ))}
       </div>
       <div className="mt-1 flex gap-1 border-t border-slate-100 pt-2">
         <input
+          data-testid="picker-label-input"
           className="min-w-0 flex-1 rounded-md border border-slate-200 px-2 py-1 text-xs outline-none focus:border-primary"
           placeholder="Своя метка…"
           value={label}
@@ -118,6 +129,7 @@ export default function TaskTreePicker({ tree, currentLabel, onPick, onClose }: 
           }}
         />
         <button
+          data-testid="picker-label-ok"
           className="rounded-md bg-primary px-2 py-1 text-xs font-medium text-white hover:bg-primary-dark disabled:opacity-40"
           onClick={submitLabel}
           disabled={!label.trim()}

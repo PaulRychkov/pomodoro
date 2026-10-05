@@ -1,0 +1,10 @@
+ALTER TABLE settings ADD COLUMN day_start_minutes integer NOT NULL DEFAULT 360;
+ALTER TABLE settings ADD COLUMN day_end_minutes integer NOT NULL DEFAULT 1200;
+ALTER TABLE plan_slots ADD COLUMN start_minutes integer;
+ALTER TABLE plan_slots ADD COLUMN period_start_minutes integer;
+ALTER TABLE plan_slots ADD COLUMN period_end_minutes integer;
+ALTER TABLE plan_slots ADD COLUMN window_id text;
+ALTER TABLE plan_slots ADD COLUMN window_title text;
+ALTER TABLE plan_slots ADD COLUMN overflow boolean NOT NULL DEFAULT false;
+ALTER TABLE plan_slots ADD COLUMN pinned_focus boolean NOT NULL DEFAULT false;
+ALTER TABLE plan_slots ADD COLUMN pinned_break boolean NOT NULL DEFAULT false;

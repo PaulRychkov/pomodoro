@@ -1,0 +1,10 @@
+ALTER TABLE plan_slots DROP COLUMN pinned_break;
+ALTER TABLE plan_slots DROP COLUMN pinned_focus;
+ALTER TABLE plan_slots DROP COLUMN overflow;
+ALTER TABLE plan_slots DROP COLUMN window_title;
+ALTER TABLE plan_slots DROP COLUMN window_id;
+ALTER TABLE plan_slots DROP COLUMN period_end_minutes;
+ALTER TABLE plan_slots DROP COLUMN period_start_minutes;
+ALTER TABLE plan_slots DROP COLUMN start_minutes;
+ALTER TABLE settings DROP COLUMN day_end_minutes;
+ALTER TABLE settings DROP COLUMN day_start_minutes;
