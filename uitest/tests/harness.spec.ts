@@ -144,6 +144,25 @@ test.describe("фейковый task-planner", () => {
     expect(await tasksLog(request)).toHaveLength(0);
   });
 
+  test("план дня строится из задач фейкового planner через tasksclient", async ({ request }) => {
+    await reset(request);
+    const slots = (await (await request.get("/api/v1/rpc/day-plan")).json()) as {
+      task: { title_snapshot: string } | null;
+      window_title: string | null;
+    }[];
+    const titles = new Set(slots.map((s) => s.task?.title_snapshot));
+    expect(titles).toContain("Работа");
+    expect(titles).toContain("Поиск работы");
+    expect(slots.some((s) => s.window_title === "Работа")).toBe(true);
+    // События без помидоров («Зал», «Обед») слотов не получают.
+    expect(titles).not.toContain("Зал");
+    expect(titles).not.toContain("Обед");
+
+    await reset(request, { tasks: { tasks: [] } });
+    const empty = (await (await request.get("/api/v1/rpc/day-plan")).json()) as { task: unknown }[];
+    expect(empty.every((s) => s.task === null)).toBe(true);
+  });
+
   test("клиент прошлого стека после reset получает 410", async ({ request }) => {
     await reset(request);
     // Поколение 0 не существует: так выглядит клиент, созданный до последнего reset.

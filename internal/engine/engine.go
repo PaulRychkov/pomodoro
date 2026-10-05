@@ -324,6 +324,11 @@ func (e *Engine) Tick(ctx context.Context) error {
 	return e.completeLocked(ctx, endAt)
 }
 
+// Now — часы движка: по ним считается «сегодня» и для сессий, и для плана.
+func (e *Engine) Now() time.Time {
+	return e.clock.Now()
+}
+
 func (e *Engine) Snapshot() State {
 	e.mu.Lock()
 	defer e.mu.Unlock()

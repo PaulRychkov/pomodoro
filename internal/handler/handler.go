@@ -182,7 +182,7 @@ func (h *Handler) activeSession(c *gin.Context) {
 }
 
 func (h *Handler) listSessions(c *gin.Context) {
-	now := time.Now()
+	now := h.engine.Now()
 	from, to := engine.LocalDayBounds(now)
 	if v := c.Query("from"); v != "" {
 		t, err := parseMoment(v, false)

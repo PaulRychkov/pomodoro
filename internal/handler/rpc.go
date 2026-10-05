@@ -112,7 +112,7 @@ func (h *Handler) rpcRelabel(c *gin.Context) {
 }
 
 func (h *Handler) rpcSessionsToday(c *gin.Context) {
-	now := time.Now().Local()
+	now := h.engine.Now().Local()
 	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	list, err := h.store.Sessions().ListRange(c.Request.Context(), from, from.Add(24*time.Hour))
 	if err != nil {

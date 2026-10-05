@@ -234,7 +234,7 @@ func (a *App) Relabel(id string, b engine.Binding) (*models.Session, error) {
 }
 
 func (a *App) ListTodaySessions() ([]models.Session, error) {
-	now := time.Now().Local()
+	now := a.engine.Now().Local()
 	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	return a.store.Sessions().ListRange(a.ctx, from, from.Add(24*time.Hour))
 }

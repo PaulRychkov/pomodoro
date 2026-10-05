@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"net/http"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -306,7 +305,7 @@ func (h *Handler) mcpStopSession(ctx context.Context, req *mcp.CallToolRequest, 
 
 func (h *Handler) mcpGetTodayStats(ctx context.Context, req *mcp.CallToolRequest, in emptyInput) (*mcp.CallToolResult, todayStatsOutput, error) {
 	st := h.engine.Snapshot()
-	from, to := engine.LocalDayBounds(time.Now())
+	from, to := engine.LocalDayBounds(h.engine.Now())
 	sessions, err := h.store.Sessions().ListRange(ctx, from, to)
 	if err != nil {
 		return nil, todayStatsOutput{}, err

@@ -133,7 +133,7 @@ func (t *fakeTasks) Handler() http.Handler {
 				writeJSON(w, http.StatusGone, map[string]string{"error": "stale tasks client: stack was reset"})
 				return
 			}
-			r.URL.Path = strings.TrimPrefix(r.URL.Path, m[0])
+			r.URL.Path, r.URL.RawPath = m[2], ""
 		}
 		mux.ServeHTTP(w, r)
 	}))
