@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { advance, getState, reset, setClock } from "./helpers";
 import {
+  DAY_END,
+  DAY_START,
   WORK_ID,
   allSlots,
   boot,
@@ -8,6 +10,7 @@ import {
   expectNoHorizontalScroll,
   expectPlanValid,
   fmClock,
+  isMobile,
   isWork,
   overflowGroup,
   readPlan,
@@ -156,6 +159,68 @@ test.describe("опоздание", () => {
   });
 });
 
+test.describe("опоздание: границы периодов", () => {
+  // Первый слот, который ещё можно сделать, и группа, в которой он окажется (утро, окно, второе окно, вечер).
+  const cases: Array<{ now: string; first: string; group: [string, string]; window: boolean }> = [
+    { now: "09:50", first: "10:00", group: ["10:00", "14:00"], window: true }, // в утре осталось 10 минут — слот не влезает
+    { now: "13:50", first: "15:00", group: ["15:00", "19:00"], window: true }, // обед вырезан, окно после обеда
+    { now: "14:30", first: "15:00", group: ["15:00", "19:00"], window: true }, // посреди обеда
+    { now: "19:40", first: "19:40", group: ["19:00", "20:00"], window: false }, // остаток вечера: один сжатый помидор
+  ];
+  for (const c of cases) {
+    test(`в ${c.now} ближайший помидор — в ${c.first}, всё остальное не пересекает границы`, async ({ page, request }) => {
+      const ui = await boot(request, page, { now: c.now });
+      const groups = await readPlan(page);
+      const slots = committed(groups);
+      expect(slots.length).toBeGreaterThan(0);
+      const first = slots[0];
+      expect(first.start).toBeGreaterThanOrEqual(toMinutes(c.first));
+      expect(first.start).toBeLessThanOrEqual(toMinutes(c.first) + 1);
+      const g = groups.find((x) => x.slots.includes(first) || x.slots.some((s) => s.idx === first.idx))!;
+      expect([g.periodStart, g.periodEnd]).toEqual([toMinutes(c.group[0]), toMinutes(c.group[1])]);
+      expect(g.windowId !== "").toBe(c.window);
+      expect(slots.every((s) => (s.start as number) >= toMinutes(c.now))).toBe(true);
+      expectPlanValid(groups, { noAdjacentOthers: true });
+      await expect(ui.digits).toHaveText(mm(Number(first.focus)));
+      await expect(page.getByTestId("next-start")).toContainText(`по плану в ${c.first.slice(0, 4)}`);
+    });
+  }
+
+  test("в 19:50 до конца дня не остаётся места: все помидоры — в «Не влезли в день»", async ({ page, request }) => {
+    await boot(request, page, { now: "19:50" });
+    const groups = await readPlan(page);
+    expect(groups.every((g) => g.kind === "overflow")).toBe(true);
+    expect(committed(groups)).toHaveLength(0);
+    await expect(page.locator('[data-testid="plan-slot"]:not([data-start=""])')).toHaveCount(0);
+    await expect(page.getByTestId("next-start")).toHaveCount(0);
+  });
+
+  test("два помидора сделаны, потом опоздание до 09:00: сделанные остаются, остаток — от «сейчас»", async ({
+    page,
+    request,
+  }) => {
+    const ui = await boot(request, page);
+    for (let i = 0; i < 2; i++) {
+      await ui.startFocus();
+      await advance(request, (await getState(request)).planned_seconds + 2);
+      await expect(page.getByTestId("day-counter")).toHaveAttribute("data-completed", String(i + 1));
+    }
+    await setClock(request, "09:00");
+    await reloadPlan(page);
+    const groups = await readPlan(page);
+    const slots = committed(groups);
+    expect(slots.filter((s) => s.done).map((s) => s.idx)).toEqual([0, 1]);
+    const open = slots.filter((s) => !s.done);
+    expect(open[0].idx).toBe(2);
+    expect(open[0].start).toBeGreaterThanOrEqual(toMinutes("09:00"));
+    expect(open[0].start).toBeLessThanOrEqual(toMinutes("09:01"));
+    // Сделанные слоты хранят фактический старт: оба в утреннем периоде 06:00–06:40, до 09:00.
+    for (const s of slots.filter((x) => x.done)) expect(s.start as number).toBeLessThan(toMinutes("07:00"));
+    expect(windowGroups(groups)[0].slots[0].start).toBe(toMinutes("10:00"));
+    expectPlanValid(groups, { noAdjacentOthers: true });
+  });
+});
+
 test.describe("идущий помидор", () => {
   test("фокус идёт по длине слота; пауза сдвигает следующие слоты вперёд, активный слот подсвечен", async ({
     page,
@@ -236,8 +301,9 @@ test.describe("идущий помидор", () => {
     const done = slotAt(page, 0);
     await expect(done).toHaveAttribute("data-done", "true");
     await expect(done).toHaveAttribute("data-active", "false");
-    await expect(done).toHaveAttribute("data-start", String(toMinutes("08:00")));
-    await expect(done.getByTestId("slot-start")).toHaveText("08:00");
+    // Фактический старт — в минуту запуска (допуск: между reset и кликом часы сервера идут сами).
+    await expect(done).toHaveAttribute("data-start", /^48[01]$/);
+    await expect(done.getByTestId("slot-start")).toHaveText(/^08:0[01]$/);
     await expect(done.getByTestId("slot-task")).toBeDisabled();
     await expect(done.getByTestId("slot-focus")).toBeDisabled();
     await expect(slotAt(page, 1)).toHaveAttribute("data-active", "true");
@@ -274,6 +340,33 @@ test.describe("идущий помидор", () => {
     await ui.startBreak();
     await expect(page.getByTestId("phase-title")).toHaveAttribute("data-phase", "long_break");
     expect((await getState(request)).planned_seconds).toBe(longMin * 60);
+    expectPlanValid(await readPlan(page), { noAdjacentOthers: true });
+  });
+
+  test("час паузы выталкивает помидоры из утра, но не за 10:00 и не в окно раньше времени", async ({ page, request }) => {
+    const ui = await boot(request, page, { now: "08:00" });
+    const focusMin = Number((committed(await readPlan(page))[0]).focus);
+    await ui.startFocus();
+    await advance(request, 300);
+    await ui.btnPause.click();
+    await expect(page.getByTestId("btn-pause")).toHaveAttribute("data-paused", "true");
+    await advance(request, 3600); // 09:05, помидор ещё на паузе
+    await ui.btnPause.click();
+    await expect(page.getByTestId("btn-pause")).toHaveAttribute("data-paused", "false");
+    await reloadPlan(page);
+
+    const groups = await readPlan(page);
+    const slots = committed(groups);
+    expect(slots[0].active).toBe(true);
+    // Идущий помидор не потерял длину, окно по-прежнему начинается ровно в 10:00.
+    await expect(ui.digits).toHaveText(/^\d\d:\d\d$/);
+    expect(await ui.seconds()).toBeLessThanOrEqual(focusMin * 60 - 300);
+    expect(windowGroups(groups)[0].slots[0].start).toBe(toMinutes("10:00"));
+    const morning = groups.find((g) => g.periodStart === toMinutes("08:00") && g.windowId === "")!;
+    for (const s of morning.slots) expect(s.end as number).toBeLessThanOrEqual(toMinutes("10:00"));
+    // В утреннем периоде их стало меньше, чем было (2 вместо 4), остальные продолжились в окне.
+    expect(morning.slots.length).toBeLessThan(4);
+    expectPlanValid(groups, { noAdjacentOthers: true });
   });
 });
 
@@ -300,7 +393,7 @@ test.describe("после конца активного дня", () => {
 });
 
 test.describe("правка слотов", () => {
-  test("задача слота: выбор в дереве сохраняется после перезагрузки", async ({ page, request }) => {
+  test("задача слота: выбор в дереве сохраняется после перезагрузки", async ({ page, request }, info) => {
     await boot(request, page);
     const before = await readPlan(page);
     // Первый слот утреннего периода 08:00–10:00 — ещё не начатый, свободный.
@@ -310,6 +403,7 @@ test.describe("правка слотов", () => {
 
     await slotAt(page, target.idx).getByTestId("slot-task").click();
     await expect(page.getByTestId("task-picker")).toBeVisible();
+    await expectNoHorizontalScroll(page, info);
     await page.getByTestId("picker-node").filter({ hasText: "Английский" }).first().click();
     await expect(page.getByTestId("task-picker")).toHaveCount(0);
     await expect(slotAt(page, target.idx).getByTestId("slot-task")).toContainText("Английский");
@@ -422,5 +516,185 @@ test.describe("правка слотов", () => {
     expect(windowGroups(groups)[0].slots[0].start).toBe(toMinutes("10:00"));
     // Сброс часов не нужен: reset следующего теста вернёт сегодняшнее время.
     await reset(request, { now: "05:50" });
+  });
+});
+
+test.describe("правка перерыва и «не влезших»", () => {
+  test("перерыв после слота: своя длина сохраняется и двигает следующий старт", async ({ page, request }) => {
+    await boot(request, page);
+    const before = committed(await readPlan(page));
+    const target = before.find((s) => s.start === toMinutes("08:00"))!;
+    const next = before.find((s) => s.idx === target.idx + 1)!;
+    const oldBreak = Number(target.brk);
+    const field = slotAt(page, target.idx).getByTestId("slot-break");
+
+    await field.fill("12");
+    await expect(field).toHaveValue("12");
+    await expect(field).toBeEnabled();
+    await reloadPlan(page);
+    await expect(slotAt(page, target.idx).getByTestId("slot-break")).toHaveValue("12");
+    const groups = await readPlan(page);
+    const moved = committed(groups).find((s) => s.idx === next.idx)!;
+    expect(moved.start! - next.start!, "следующий помидор сдвинулся на разницу в перерыве").toBe(12 - oldBreak);
+    expectPlanValid(groups, { noAdjacentOthers: true });
+
+    // Пустое поле — перерыв из плана.
+    await slotAt(page, target.idx).getByTestId("slot-break").fill("");
+    await expect(slotAt(page, target.idx).getByTestId("slot-break")).toHaveValue(String(oldBreak));
+  });
+
+  test("перерыв выполненного помидора можно поменять до старта перерыва — циферблат его покажет", async ({
+    page,
+    request,
+  }) => {
+    const ui = await boot(request, page, { now: "08:00" });
+    await ui.startFocus();
+    await advance(request, (await getState(request)).planned_seconds + 2);
+    await expect(ui.btnFocus).toBeVisible();
+    await reloadPlan(page);
+
+    const field = slotAt(page, 0).getByTestId("slot-break");
+    await expect(field).toBeEnabled();
+    await field.fill("9");
+    await expect(field).toHaveValue("9");
+    await expect(ui.digits).toHaveText("09:00");
+    await ui.startBreak();
+    expect((await getState(request)).planned_seconds).toBe(9 * 60);
+    // Предпоследний выполненный слот перерыв уже не меняет.
+    await expect(field).toBeDisabled();
+  });
+
+  // Строки «Не влезли в день» полупрозрачные (свой контекст наложения): пикер обязан быть поверх соседей.
+  test("пикер задач слота из «Не влезли в день» не перекрыт соседними строками", async ({ page, request }, info) => {
+    await boot(request, page, { now: "20:30" });
+    const first = (await readPlan(page))[0].slots[0];
+    await slotAt(page, first.idx).getByTestId("slot-task").click();
+    await expect(page.getByTestId("task-picker")).toBeVisible();
+    await page.screenshot({ path: info.outputPath("overflow-picker.png") });
+
+    const node = page.getByTestId("picker-node").filter({ hasText: "Слепая печать" }).first();
+    await node.scrollIntoViewIfNeeded();
+    // Что реально лежит под центром пункта списка: сам пункт или чужое поле ввода?
+    const topmost = await node.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return { inside: hit ? el.contains(hit) : false, hit: hit ? `${hit.tagName}[data-testid=${hit.getAttribute("data-testid")}]` : null };
+    });
+    expect(topmost, `поверх пункта «Слепая печать» лежит ${topmost.hit}`).toEqual({ inside: true, hit: expect.any(String) });
+  });
+
+  test("слоты «Не влезли в день» остаются без времени после обновления плана", async ({ page, request }) => {
+    await boot(request, page, { now: "20:30" });
+    await page.getByTestId("plan-refresh").click();
+    await expect(page.getByTestId("plan-refresh")).toBeEnabled();
+    await expect(page.getByTestId("app-error")).toHaveCount(0);
+    const groups = await readPlan(page);
+    expect(groups.every((g) => g.kind === "overflow")).toBe(true);
+    expectPlanValid(groups);
+    await expect(page.locator('[data-testid="plan-slot"]:not([data-start=""])')).toHaveCount(0);
+  });
+});
+
+// Свип без браузера: инварианты плана для сетки «время × длина фокуса × блоки × доля окна» и для разных границ дня.
+// Работает по /api/v1/rpc/day-plan, поэтому достаточно одного проекта.
+interface ApiSlot {
+  idx: number;
+  start_minutes: number | null;
+  end_minutes: number | null;
+  period_start_minutes: number | null;
+  period_end_minutes: number | null;
+  window_id: string | null;
+  task: { title_snapshot: string } | null;
+  overflow: boolean;
+}
+
+function planProblems(label: string, plan: ApiSlot[], dayStart: number, dayEnd: number, share: number | null): string[] {
+  const out: string[] = [];
+  const com = plan.filter((s) => !s.overflow);
+  let prev = -1;
+  for (const s of com) {
+    const at = `${label}: слот ${s.idx}`;
+    if (s.start_minutes == null || s.end_minutes == null) {
+      out.push(`${at} без времени`);
+      continue;
+    }
+    if (s.start_minutes <= prev) out.push(`${at} не по возрастанию`);
+    prev = s.start_minutes;
+    if (s.start_minutes < (s.period_start_minutes ?? 0) || s.end_minutes > (s.period_end_minutes ?? 0))
+      out.push(`${at} ${fmClock(s.start_minutes)}–${fmClock(s.end_minutes)} вне периода`);
+    if (s.start_minutes < dayStart || s.end_minutes > dayEnd) out.push(`${at} вне активного дня`);
+    if (s.window_id == null && s.task?.title_snapshot === "Работа") out.push(`${at} «Работа» вне окна`);
+  }
+  for (const s of plan.filter((x) => x.overflow)) {
+    if (s.start_minutes != null || s.end_minutes != null) out.push(`${label}: overflow-слот ${s.idx} со временем`);
+  }
+  if (share != null && share >= 50) {
+    for (let i = 1; i < com.length; i++) {
+      const a = com[i - 1];
+      const b = com[i];
+      if (a.window_id && b.window_id && a.period_end_minutes === b.period_end_minutes) {
+        if (a.task?.title_snapshot !== "Работа" && b.task?.title_snapshot !== "Работа")
+          out.push(`${label}: два «чужих» слота подряд ${a.idx},${b.idx}`);
+      }
+    }
+  }
+  if (share != null) {
+    const win = com.filter((s) => s.window_id);
+    const work = win.filter((s) => s.task?.title_snapshot === "Работа").length;
+    const want = Math.floor((win.length * share + 50) / 100);
+    if (work !== want) out.push(`${label}: «Работа» ${work} из ${win.length}, ожидалось ${want}`);
+  }
+  return out;
+}
+
+test.describe("инварианты плана на сетке настроек (API)", () => {
+  test("время × фокус × блоки × доля окна: границы периодов, порядок, доля «Работы», чередование", async ({
+    request,
+  }, info) => {
+    test.skip(isMobile(info), "не зависит от экрана — достаточно desktop");
+    test.setTimeout(120_000);
+    const problems: string[] = [];
+    let plans = 0;
+    for (const now of ["05:50", "08:40", "12:00", "13:50", "17:00"]) {
+      for (const focus of [15, 25, 40]) {
+        for (const blocks of [[2], [3], [4, 4]]) {
+          for (const share of [50, 60, 67, 80, 100]) {
+            await reset(request, {
+              now,
+              settings: { day_blocks: blocks, focus_duration_seconds: focus * 60, window_share_percent: share },
+            });
+            const plan = (await (await request.get("/api/v1/rpc/day-plan")).json()) as ApiSlot[];
+            plans++;
+            problems.push(
+              ...planProblems(`now=${now} focus=${focus} blocks=${blocks} share=${share}`, plan, DAY_START, DAY_END, share),
+            );
+          }
+        }
+      }
+    }
+    expect(plans).toBe(225);
+    expect(problems.slice(0, 20)).toEqual([]);
+  });
+
+  test("границы дня × время: помидоры только внутри активного дня", async ({ request }, info) => {
+    test.skip(isMobile(info), "не зависит от экрана — достаточно desktop");
+    test.setTimeout(120_000);
+    const problems: string[] = [];
+    const starts = [360, 450, 555, 620, 780, 905];
+    const ends = [1200, 1130, 1020, 905, 700, 640, 1440];
+    for (const now of ["05:50", "10:20", "14:20"]) {
+      for (const ds of starts) {
+        for (const de of ends) {
+          if (de - ds < 30) continue;
+          await reset(request, {
+            now,
+            settings: { day_blocks: [3], day_start_minutes: ds, day_end_minutes: de },
+          });
+          const plan = (await (await request.get("/api/v1/rpc/day-plan")).json()) as ApiSlot[];
+          problems.push(...planProblems(`now=${now} day=${fmClock(ds)}-${fmClock(de)}`, plan, ds, de, null));
+        }
+      }
+    }
+    expect(problems.slice(0, 20)).toEqual([]);
   });
 });

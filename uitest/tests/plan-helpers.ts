@@ -129,12 +129,13 @@ export function expectPlanValid(groups: GroupInfo[], rules: PlanRules = {}): voi
       const start = s.start as number;
       expect(start, `${where}: идёт после предыдущего`).toBeGreaterThan(prevStart);
       prevStart = start;
-      expect(start, `${where}: не раньше начала дня`).toBeGreaterThanOrEqual(dayStart);
+      // Выполненный слот хранит фактический старт — человек мог начать до 06:00 или чуть раньше периода.
+      if (!s.done) expect(start, `${where}: не раньше начала дня`).toBeGreaterThanOrEqual(dayStart);
       if (g.kind === "period") {
         // Группа-период: границы известны, слот целиком внутри.
         expect(g.periodStart, `${where}: у группы есть начало периода`).not.toBeNull();
         expect(g.periodEnd, `${where}: у группы есть конец периода`).not.toBeNull();
-        expect(start, `${where}: не раньше начала периода`).toBeGreaterThanOrEqual(g.periodStart as number);
+        if (!s.done) expect(start, `${where}: не раньше начала периода`).toBeGreaterThanOrEqual(g.periodStart as number);
         // У выполненного слота конца нет (в плане остаётся только фактический старт).
         if (!s.done) {
           expect(s.end, `${where}: есть конец`).not.toBeNull();

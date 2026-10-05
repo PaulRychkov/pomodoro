@@ -257,6 +257,9 @@ export default function PlanToday({
                         "flex items-center gap-1.5 rounded-lg px-1 py-0.5 " +
                         (s.done ? "opacity-45 " : "") +
                         (muted ? "opacity-70 " : "") +
+                        // opacity создаёт свой контекст наложения: строку с открытым
+                        // пикером поднимаем над соседними, иначе они перекроют список
+                        (pickerFor === s.idx ? "relative z-30 " : "") +
                         (isActive ? "bg-primary/10 ring-1 ring-primary/40" : "")
                       }
                     >
