@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PomodoroPage, advance, getSettings, getState, setClock } from "./helpers";
+import { PomodoroPage, advance, getClock, getSettings, getState, setClock } from "./helpers";
 import {
   WORK_ID,
   allSlots,
@@ -288,7 +288,7 @@ test.describe("автостарт", () => {
 });
 
 test.describe("пресеты помидорного дня", () => {
-  test("сохранить план как пресет, назначить на понедельник, план строится по его длительностям, удалить", async ({
+  test("сохранить план как пресет, назначить на сегодняшний день недели, план строится по его длительностям, удалить", async ({
     page,
     request,
   }, info) => {
@@ -297,8 +297,9 @@ test.describe("пресеты помидорного дня", () => {
     const presetFocus = plan0.map((s) => Number(s.focus));
     const presetBreak = plan0.map((s) => Number(s.brk));
     expect(plan0.length).toBeGreaterThan(10);
-    // 2026-10-05 — понедельник.
-    const monday = page.locator('[data-testid="preset-weekday"][data-weekday="1"]');
+    const today = (await getClock(request)).now.slice(0, 10);
+    const weekday = ((new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7) + 1;
+    const todaySelect = page.locator(`[data-testid="preset-weekday"][data-weekday="${weekday}"]`);
 
     await ui.gotoSettings();
     await page.getByTestId("preset-name").fill("Тест");
@@ -309,11 +310,11 @@ test.describe("пресеты помидорного дня", () => {
     await expect(page.getByTestId("preset-name")).toHaveValue("");
     await expect(page.getByTestId("preset-error")).toHaveCount(0);
 
-    await expect(monday).toHaveValue("");
-    await monday.selectOption({ label: "Тест" });
-    await expect(monday).toHaveValue("Тест");
+    await expect(todaySelect).toHaveValue("");
+    await todaySelect.selectOption({ label: "Тест" });
+    await expect(todaySelect).toHaveValue("Тест");
     const schedule = await (await request.get("/api/v1/rpc/preset-schedule")).json();
-    expect(schedule).toEqual([{ weekday: 1, preset_name: "Тест" }]);
+    expect(schedule).toEqual([{ weekday, preset_name: "Тест" }]);
     await expectNoHorizontalScroll(page, info);
 
     // Опаздываем до 08:40 и перестраиваем план: раскладка идёт по длительностям пресета, но в границах периодов.
@@ -341,10 +342,10 @@ test.describe("пресеты помидорного дня", () => {
 
     // Удаление пресета: строка и назначение пропадают.
     await ui.gotoSettings();
-    await expect(monday).toHaveValue("Тест");
+    await expect(todaySelect).toHaveValue("Тест");
     await page.locator('[data-testid="preset-delete"][data-name="Тест"]').click();
     await expect(row).toHaveCount(0);
-    await expect(monday).toHaveValue("");
+    await expect(todaySelect).toHaveValue("");
     await expect(page.getByTestId("preset-error")).toHaveCount(0);
     expect(await (await request.get("/api/v1/rpc/preset-schedule")).json()).toEqual([]);
 
