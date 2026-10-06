@@ -43,10 +43,10 @@ export namespace engine {
 	    paused_at?: any;
 	    paused_total_seconds: number;
 	    planned_seconds: number;
-	    next_planned_seconds: number;
 	    remaining_seconds: number;
 	    label?: string;
 	    task?: models.TaskRef;
+	    next_planned_seconds: number;
 	    completed_today: number;
 	    credit_today: number;
 	    day_blocks: number[];
@@ -72,10 +72,10 @@ export namespace engine {
 	        this.paused_at = this.convertValues(source["paused_at"], null);
 	        this.paused_total_seconds = source["paused_total_seconds"];
 	        this.planned_seconds = source["planned_seconds"];
-	        this.next_planned_seconds = source["next_planned_seconds"];
 	        this.remaining_seconds = source["remaining_seconds"];
 	        this.label = source["label"];
 	        this.task = this.convertValues(source["task"], models.TaskRef);
+	        this.next_planned_seconds = source["next_planned_seconds"];
 	        this.completed_today = source["completed_today"];
 	        this.credit_today = source["credit_today"];
 	        this.day_blocks = source["day_blocks"];
