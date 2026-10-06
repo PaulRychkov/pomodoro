@@ -139,12 +139,6 @@ const restApi: typeof wailsApi = {
 
 export const api = isDesktop ? wailsApi : restApi;
 
-/**
- * В REST/polling-режиме нет push-событий движка, поэтому причину перехода
- * восстанавливаем сравнением предыдущего состояния с новым. За один опрос
- * может случиться несколько переходов (например, помидор завершился и
- * автостартовал перерыв), поэтому причин может быть несколько.
- */
 function deriveReasons(prev: State, next: State, prevAt: number): string[] {
   const reasons: string[] = [];
   const sessionChanged = next.session_id !== prev.session_id;
@@ -153,7 +147,6 @@ function deriveReasons(prev: State, next: State, prevAt: number): string[] {
     reasons.push("day_rolled");
   }
   if (hadSession && (next.phase === "idle" || sessionChanged)) {
-    // Перерыв счётчик не двигает: закончился сам, если к этому опросу его время вышло.
     const breakRanOut =
       prev.phase !== "focus" && !prev.paused && Date.now() >= prevAt + prev.remaining_seconds * 1000 - 1500;
     reasons.push(next.completed_today > prev.completed_today || breakRanOut ? "completed" : "stopped");

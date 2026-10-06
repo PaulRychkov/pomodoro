@@ -27,9 +27,6 @@ import (
 	"github.com/PaulRychkov/pomodoro/internal/tasksclient"
 )
 
-// stack — полный комплект бэкенда: SQLite во временной директории, движок, сервис
-// плана и роутер. Проводка зеркалит mobile.Start — при её правках повторить здесь.
-// Пересоздаётся целиком на каждый reset.
 type stack struct {
 	engine  *engine.Engine
 	handler http.Handler
@@ -110,7 +107,6 @@ func buildStack(dir string, cfg stackConfig) (*stack, error) {
 			cfg.log.Warn("обновление плана дня", zap.Error(err))
 		}
 	}
-	// Уведомитель работает под мьютексом движка: план трогаем только в горутине.
 	eng.SetNotifier(func(state engine.State, reason string) {
 		switch reason {
 		case "completed":
@@ -139,8 +135,6 @@ func (s *stack) close() {
 	_ = os.RemoveAll(s.dir)
 }
 
-// mergeSettings накладывает частичный JSON на настройки по умолчанию; вложенный
-// overlay тоже мёржится по полям.
 func mergeSettings(raw json.RawMessage) (models.Settings, error) {
 	s := models.DefaultSettings()
 	if len(raw) > 0 && string(raw) != "null" {

@@ -7,17 +7,12 @@ import (
 	"github.com/PaulRychkov/pomodoro/internal/tasksclient"
 )
 
-// period — отрезок активного дня, куда укладываются помидоры: свободное время
-// между событиями или окно задачи с фиксированным временем («Работа»).
-// Помидор никогда не пересекает границу своего периода.
 type period struct {
 	start     int
 	end       int
 	origStart int
 	window    *tasksclient.TaskOption
-	// tailRest — следующий период начинается вплотную: в конце этого
-	// оставляем короткий перерыв, чтобы следующий начался вовремя.
-	tailRest bool
+	tailRest  bool
 }
 
 func (p period) windowID() string {
@@ -35,9 +30,6 @@ func dayBounds(s models.Settings) (int, int) {
 	return start, end
 }
 
-// dayPeriods режет активный день на периоды: события без помидоров (обед, зал)
-// вырезаются, окна с помидорами становятся отдельными периодами, остальное —
-// свободное время. Всё, что за границами активного дня, отбрасывается.
 func dayPeriods(settings models.Settings, due []tasksclient.DueTask) []period {
 	dayStart, dayEnd := dayBounds(settings)
 	var out []period
@@ -72,7 +64,6 @@ func dayPeriods(settings models.Settings, due []tasksclient.DueTask) []period {
 	return out
 }
 
-// clipPeriods оставляет от периодов только время начиная с минуты from.
 func clipPeriods(ps []period, from int) []period {
 	var out []period
 	for _, p := range ps {
@@ -117,7 +108,6 @@ func durationsOf(s models.Settings) durations {
 	return d
 }
 
-// shape — место помидора в дне: длительности, плановый старт и период.
 type shape struct {
 	focus  int
 	brk    int
@@ -133,9 +123,6 @@ func usableEnd(p period, d durations) int {
 	return p.end
 }
 
-// fitLayout укладывает помидоры в каждый период ровно: длина фокуса ужимается
-// не ниже 2/3 настроенной, перерывы не короче настроенных, длинный перерыв —
-// после каждого блока внутри периода.
 func fitLayout(ps []period, d durations) []shape {
 	cfg := DefaultFitConfig(d.focus, d.short, d.long, d.block)
 	cfg.MinShort = d.short
@@ -148,8 +135,6 @@ func fitLayout(ps []period, d durations) []shape {
 			brk := fit.Short
 			switch {
 			case k+1 == fit.Count:
-				// После последнего помидора периода — обычный короткий
-				// перерыв: следующий период начнётся по своему времени.
 				brk = d.short
 			case (k+1)%d.block == 0:
 				brk = fit.Long
@@ -161,8 +146,6 @@ func fitLayout(ps []period, d durations) []shape {
 	return out
 }
 
-// packLayout раскладывает помидоры заданных длин по порядку: не влезающий в
-// период помидор переносится в следующий, не влезающие в день отбрасываются.
 func packLayout(ps []period, durs []slotDuration, d durations) []shape {
 	var out []shape
 	pi := 0
@@ -186,10 +169,6 @@ func packLayout(ps []period, durs []slotDuration, d durations) []shape {
 	return out
 }
 
-// applyPins привязывает ручные правки слотов к местам дня и, если ручные
-// длительности не помещаются в период, освобождает место: сначала убирает
-// последние незакреплённые помидоры периода. Возвращает раскладку и правки,
-// которым места не нашлось.
 func applyPins(shapes []shape, ps []period, base int, pinned map[int]models.PlanSlot, d durations) ([]shape, []models.PlanSlot) {
 	for i := range shapes {
 		sl, ok := pinned[base+i]
@@ -239,8 +218,6 @@ func applyPins(shapes []shape, ps []period, base int, pinned map[int]models.Plan
 	return out, lost
 }
 
-// chainFits перестраивает старты помидоров периода по их длительностям и
-// проверяет, что последний фокус заканчивается внутри периода.
 func chainFits(group []shape, p period, d durations) bool {
 	t := group[0].start
 	for i := range group {
@@ -251,9 +228,6 @@ func chainFits(group []shape, p period, d durations) bool {
 	return last.start+last.focus <= usableEnd(p, d)
 }
 
-// windowShare решает, какие помидоры окна достаются его задаче: доля
-// window_share_percent считается от всех помидоров окна за день (включая уже
-// сделанные), остальные отдаются другим задачам и разносятся по окну равномерно.
 func windowShare(shapes []shape, ps []period, frozen []models.PlanSlot, sharePercent int) map[int]bool {
 	toWindow := map[int]bool{}
 	if sharePercent <= 0 {
@@ -314,15 +288,10 @@ type buildInput struct {
 	preset   *models.Preset
 	due      []tasksclient.DueTask
 	existing []models.PlanSlot
-	// frozen — сколько первых слотов уже сделано или идёт: их не трогаем.
-	frozen int
-	// from — минута, с которой раскладывается остаток дня.
-	from int
+	frozen   int
+	from     int
 }
 
-// buildDay строит план дня: сделанные слоты остаются как есть, остаток дня от
-// from раскладывается по периодам, окна получают свою долю, гибкие задачи —
-// оставшиеся места по трудозатратам и приоритету, излишек уходит в «не влезшие».
 func buildDay(in buildInput) []models.PlanSlot {
 	d := durationsOf(in.settings)
 	valid := map[string]bool{}
@@ -519,8 +488,6 @@ func breakMinutes(sl models.PlanSlot, def int) int {
 	return def
 }
 
-// planBlocks — блоки плана по порядку: блок кончается длинным перерывом или
-// границей периода. Слоты без места в дне в блоки не входят.
 func planBlocks(rows []models.PlanSlot, d durations) []int {
 	var blocks []int
 	n := 0

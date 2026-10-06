@@ -85,7 +85,6 @@ func (f *serviceFixture) setClock(t *testing.T, hhmm string) {
 	f.now = at
 }
 
-// focusDone записывает завершённый помидор: старт в hhmm, длина minutes.
 func (f *serviceFixture) focusDone(t *testing.T, hhmm string, minutes int) {
 	t.Helper()
 	start, err := time.ParseInLocation("2006-01-02 15:04", "2026-10-05 "+hhmm, time.Local)
@@ -114,7 +113,6 @@ func clock(m int) string {
 	return time.Date(0, 1, 1, m/60, m%60, 0, 0, time.UTC).Format("15:04")
 }
 
-// checkViews — прогноз никогда не выводит помидор за его период и за конец дня.
 func checkViews(t *testing.T, views []SlotView, dayEnd int) {
 	t.Helper()
 	for _, v := range views {
@@ -260,7 +258,6 @@ func TestServiceDoesNotCloseWindowBeforeItEnds(t *testing.T) {
 			workIdx = i
 		}
 	}
-	// Все слоты до последнего рабочего сделаны, но окно работы ещё идёт.
 	for i := 0; i <= workIdx; i++ {
 		f.focusDone(t, "06:00", 1)
 	}

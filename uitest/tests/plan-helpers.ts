@@ -1,15 +1,8 @@
 import { expect, type APIRequestContext, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { PomodoroPage, reset, type ResetOptions } from "./helpers";
 
-// ---------------------------------------------------------------------------
-// Разбор «Плана помидоров» из DOM и проверка его инвариантов.
-// Один page.evaluate даёт согласованный снимок: между чтениями отдельных
-// локаторов план не успевает перестроиться (опрос раз в секунду).
-// ---------------------------------------------------------------------------
-
 export const DAY_START = 6 * 60;
 export const DAY_END = 20 * 60;
-/** Окно «Работа» в фикстуре по умолчанию (cmd/uitest-server/tasks.go). */
 export const WORK_ID = "win-work";
 export const WORK_TITLE = "Работа";
 
@@ -21,10 +14,8 @@ export interface SlotInfo {
   start: number | null;
   end: number | null;
   windowId: string;
-  /** Текст кнопки slot-task: название задачи/метка либо «—». */
   task: string;
   startText: string;
-  /** Значение полей длительности: минуты или "" (слот без своей длительности). */
   focus: string;
   brk: string;
 }
@@ -35,7 +26,6 @@ export interface GroupInfo {
   periodStart: number | null;
   periodEnd: number | null;
   title: string;
-  /** Счётчик окна («Работа 5 из 8 · другие 3») — только у групп-окон. */
   counter: { count: number; other: number } | null;
   slots: SlotInfo[];
 }
@@ -44,7 +34,6 @@ export function fmClock(minutes: number): string {
   return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
-/** «HH:MM» → минуты от полуночи. */
 export function toMinutes(clock: string): number {
   const [h, m] = clock.split(":").map(Number);
   return h * 60 + m;
@@ -87,25 +76,18 @@ export async function readPlan(page: Page): Promise<GroupInfo[]> {
 }
 
 export const allSlots = (groups: GroupInfo[]): SlotInfo[] => groups.flatMap((g) => g.slots);
-/** Слоты с местом в дне (не «Не влезли в день»), в порядке плана. */
 export const committed = (groups: GroupInfo[]): SlotInfo[] => allSlots(groups).filter((s) => !s.overflow);
 export const overflowGroup = (groups: GroupInfo[]): GroupInfo | undefined => groups.find((g) => g.kind === "overflow");
 export const windowGroups = (groups: GroupInfo[]): GroupInfo[] => groups.filter((g) => g.kind === "period" && g.windowId);
 
-/** Слот задачи окна «Работа»: точное совпадение — «Работа с ИИ и другое» к ней не относится. */
 export const isWork = (s: SlotInfo): boolean => s.task === WORK_TITLE;
 
 export interface PlanRules {
   dayStart?: number;
   dayEnd?: number;
-  /** Доля окна ≥50%: две «чужие» задачи подряд внутри окна недопустимы. */
   noAdjacentOthers?: boolean;
 }
 
-/**
- * Инварианты плана дня: каждый слот с местом целиком лежит в группе-периоде и в активном дне,
- * слоты идут по времени; «Работа» — только в своём окне; «Не влезли» — без времени.
- */
 export function expectPlanValid(groups: GroupInfo[], rules: PlanRules = {}): void {
   const dayStart = rules.dayStart ?? DAY_START;
   const dayEnd = rules.dayEnd ?? DAY_END;
@@ -129,14 +111,11 @@ export function expectPlanValid(groups: GroupInfo[], rules: PlanRules = {}): voi
       const start = s.start as number;
       expect(start, `${where}: идёт после предыдущего`).toBeGreaterThan(prevStart);
       prevStart = start;
-      // Выполненный слот хранит фактический старт — человек мог начать до 06:00 или чуть раньше периода.
       if (!s.done) expect(start, `${where}: не раньше начала дня`).toBeGreaterThanOrEqual(dayStart);
       if (g.kind === "period") {
-        // Группа-период: границы известны, слот целиком внутри.
         expect(g.periodStart, `${where}: у группы есть начало периода`).not.toBeNull();
         expect(g.periodEnd, `${where}: у группы есть конец периода`).not.toBeNull();
         if (!s.done) expect(start, `${where}: не раньше начала периода`).toBeGreaterThanOrEqual(g.periodStart as number);
-        // У выполненного слота конца нет (в плане остаётся только фактический старт).
         if (!s.done) {
           expect(s.end, `${where}: есть конец`).not.toBeNull();
           expect(s.end as number, `${where}: конец позже начала`).toBeGreaterThan(start);
@@ -145,7 +124,6 @@ export function expectPlanValid(groups: GroupInfo[], rules: PlanRules = {}): voi
         }
         if (s.startText) expect(s.startText, `${where}: подпись начала`).toBe(fmClock(start));
       }
-      // Окно «Работа» живёт только в своих группах-окнах.
       if (isWork(s)) {
         expect(g.windowId, `${where}: задача окна вне окна`).toBe(WORK_ID);
         expect(s.windowId, `${where}: window-id слота`).toBe(WORK_ID);
@@ -169,16 +147,10 @@ export function expectPlanValid(groups: GroupInfo[], rules: PlanRules = {}): voi
   }
 }
 
-// ---------------------------------------------------------------------------
-// Запуск, ожидания, мобильный режим.
-// ---------------------------------------------------------------------------
-
 export interface BootOptions extends ResetOptions {
-  /** Блоки дня; по умолчанию [3] — длинный перерыв после каждого третьего помидора. */
   blocks?: number[];
 }
 
-/** Сбрасывает бэкенд (фикстура задач по умолчанию), открывает страницу и ждёт, пока появится план. */
 export async function boot(
   request: APIRequestContext,
   page: Page,
@@ -198,7 +170,6 @@ export async function waitForPlan(page: Page): Promise<void> {
   await expect(page.getByTestId("plan-slot").first()).toBeVisible();
 }
 
-/** Перезагружает страницу и ждёт план: после сдвига часов сервера это самый надёжный способ увидеть новые времена. */
 export async function reloadPlan(page: Page): Promise<void> {
   await page.reload();
   await expect(page.getByTestId("timer-digits")).toBeVisible();
@@ -212,7 +183,6 @@ export function planSlots(page: Page): Locator {
   return page.getByTestId("plan-slot");
 }
 
-/** Ждёт, пока кнопка настроек и форма вернутся из «Сохранено» — запись прошла. */
 export async function saveSettings(page: Page): Promise<void> {
   await page.getByTestId("settings-save").click();
   await expect(page.getByTestId("settings-status")).toHaveText("Сохранено");
@@ -221,10 +191,6 @@ export async function saveSettings(page: Page): Promise<void> {
 
 export const isMobile = (info: TestInfo): boolean => info.project.name === "mobile";
 
-/**
- * На мобильном экране страница не должна ехать вбок: ни документ, ни прокручиваемая область <main>
- * (у неё overflow-y: auto, поэтому лишняя ширина прячется там, а не в document).
- */
 export async function expectNoHorizontalScroll(page: Page, info: TestInfo): Promise<void> {
   if (!isMobile(info)) return;
   const m = await page.evaluate(() => {

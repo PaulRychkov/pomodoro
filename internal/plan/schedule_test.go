@@ -8,7 +8,6 @@ import (
 
 func ptr(v int) *int { return &v }
 
-// row — слот с местом в дне: старт, длительности и период в минутах.
 func row(idx, start, focus, brk, pStart, pEnd int) models.PlanSlot {
 	return models.PlanSlot{
 		Idx: idx, StartMin: ptr(start), FocusSeconds: ptr(focus * 60), BreakSeconds: ptr(brk * 60),
@@ -16,7 +15,6 @@ func row(idx, start, focus, brk, pStart, pEnd int) models.PlanSlot {
 	}
 }
 
-// morning — 8:00–10:00 четыре помидора, работа с 10:00 два помидора.
 func morning() []models.PlanSlot {
 	work := "w"
 	rows := []models.PlanSlot{

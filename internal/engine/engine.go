@@ -64,41 +64,34 @@ func (b Binding) validate() error {
 }
 
 type State struct {
-	Phase            Phase           `json:"phase"`
-	NextPhase        Phase           `json:"next_phase"`
-	Paused           bool            `json:"paused"`
-	SessionID        *uuid.UUID      `json:"session_id"`
-	StartedAt        *time.Time      `json:"started_at"`
-	PausedAt         *time.Time      `json:"paused_at"`
-	PausedTotal      int             `json:"paused_total_seconds"`
-	PlannedSeconds   int             `json:"planned_seconds"`
-	RemainingSeconds int             `json:"remaining_seconds"`
-	Label            *string         `json:"label"`
-	Task             *models.TaskRef `json:"task"`
-	// NextPlannedSeconds — длительность того, что стартует следующим: у idle —
-	// фокус слота или запланированный перерыв (по NextPhase), у активной
-	// сессии равна PlannedSeconds.
-	NextPlannedSeconds int     `json:"next_planned_seconds"`
-	CompletedToday     int     `json:"completed_today"`
-	CreditToday        float64 `json:"credit_today"`
-	DayBlocks          []int   `json:"day_blocks"`
-	BlockIndex         int     `json:"block_index"`
-	PosInBlock         int     `json:"pos_in_block"`
-	BlockSize          int     `json:"block_size"`
-	DayTotal           int     `json:"day_total"`
-	DayComplete        bool    `json:"day_complete"`
-	SoundEnabled       bool    `json:"sound_enabled"`
-	SettingsStamp      string  `json:"settings_stamp"`
+	Phase              Phase           `json:"phase"`
+	NextPhase          Phase           `json:"next_phase"`
+	Paused             bool            `json:"paused"`
+	SessionID          *uuid.UUID      `json:"session_id"`
+	StartedAt          *time.Time      `json:"started_at"`
+	PausedAt           *time.Time      `json:"paused_at"`
+	PausedTotal        int             `json:"paused_total_seconds"`
+	PlannedSeconds     int             `json:"planned_seconds"`
+	RemainingSeconds   int             `json:"remaining_seconds"`
+	Label              *string         `json:"label"`
+	Task               *models.TaskRef `json:"task"`
+	NextPlannedSeconds int             `json:"next_planned_seconds"`
+	CompletedToday     int             `json:"completed_today"`
+	CreditToday        float64         `json:"credit_today"`
+	DayBlocks          []int           `json:"day_blocks"`
+	BlockIndex         int             `json:"block_index"`
+	PosInBlock         int             `json:"pos_in_block"`
+	BlockSize          int             `json:"block_size"`
+	DayTotal           int             `json:"day_total"`
+	DayComplete        bool            `json:"day_complete"`
+	SoundEnabled       bool            `json:"sound_enabled"`
+	SettingsStamp      string          `json:"settings_stamp"`
 }
 
 type Notifier func(state State, reason string)
 
-// DurationProvider и BlocksProvider вызываются под мьютексом движка: они не
-// должны обращаться к методам Engine (иначе взаимная блокировка).
 type DurationProvider func(pomodoroIdx int) (focusSeconds, breakSeconds *int)
 
-// BlocksProvider отдаёт размеры блоков сегодняшнего плана дня; пустой результат —
-// план не построен, тогда структура дня берётся из settings.DayBlocks.
 type BlocksProvider func() []int
 
 type Engine struct {
@@ -200,8 +193,6 @@ func (e *Engine) dayBlocksLocked() []int {
 	return e.settings.DayBlocks
 }
 
-// refreshNextBreakLocked пересчитывает вид перерыва в ожидании: план дня
-// (а с ним и блоки) мог измениться после того, как перерыв был выбран.
 func (e *Engine) refreshNextBreakLocked() {
 	if e.active == nil && (e.nextPhase == PhaseShortBreak || e.nextPhase == PhaseLongBreak) && e.completedToday > 0 {
 		e.nextPhase = e.breakPhaseForLocked(e.completedToday)
@@ -217,8 +208,6 @@ func (e *Engine) plannedFocusLocked() int {
 	return e.settings.FocusDurationSeconds
 }
 
-// plannedBreakLocked — перерыв после последнего завершённого помидора: из слота
-// плана, иначе дефолт настроек по виду перерыва.
 func (e *Engine) plannedBreakLocked(phase Phase) int {
 	planned := e.settings.ShortBreakSeconds
 	if phase == PhaseLongBreak {
@@ -324,7 +313,6 @@ func (e *Engine) Tick(ctx context.Context) error {
 	return e.completeLocked(ctx, endAt)
 }
 
-// Now — часы движка: по ним считается «сегодня» и для сессий, и для плана.
 func (e *Engine) Now() time.Time {
 	return e.clock.Now()
 }
@@ -406,8 +394,6 @@ func (e *Engine) startBreakLocked(ctx context.Context) (State, error) {
 	e.refreshNextBreakLocked()
 	phase := e.nextPhase
 	if phase != PhaseShortBreak && phase != PhaseLongBreak {
-		// перерыв по желанию пользователя без только что завершённого фокуса:
-		// вид и длительность — от слота последнего помидора
 		phase = PhaseShortBreak
 		if e.completedToday > 0 {
 			phase = e.breakPhaseForLocked(e.completedToday)

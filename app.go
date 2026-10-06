@@ -67,7 +67,6 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.engine.SetNotifier(func(st engine.State, reason string) {
 		runtime.EventsEmit(a.ctx, "pomodoro:state", StatePush{State: st, Reason: reason})
-		// уведомитель работает под мьютексом движка: план трогаем только в горутине
 		switch reason {
 		case "completed":
 			focusDone := st.NextPhase != engine.PhaseFocus

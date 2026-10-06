@@ -968,7 +968,6 @@ func TestManualBreakWithoutFinishedFocusIsLabelledBySlot(t *testing.T) {
 		s.LongBreakSeconds = 90
 		s.DayBlocks = models.IntList{4, 4}
 	})
-	// нет завершённых помидоров: перерыв короткий
 	st, err := e.StartBreak(context.Background())
 	if err != nil {
 		t.Fatalf("start break: %v", err)
@@ -991,7 +990,6 @@ func TestManualBreakWithoutFinishedFocusIsLabelledBySlot(t *testing.T) {
 	if st := e.Snapshot(); st.NextPhase != PhaseFocus {
 		t.Fatalf("after break: next=%s, want focus", st.NextPhase)
 	}
-	// ещё один перерыв по желанию: слот 0 длинный, вид и длительность — long
 	st, err = e.StartBreak(context.Background())
 	if err != nil {
 		t.Fatalf("start extra break: %v", err)

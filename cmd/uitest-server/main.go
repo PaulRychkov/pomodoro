@@ -1,7 +1,3 @@
-// Command uitest-server — тестовый бэкенд для браузерных e2e-тестов (Playwright).
-// Собирает тот же стек, что и mobile.Start (SQLite + engine + plan + handler +
-// статика фронтенда), но с управляемыми часами и подменой task-planner на том же
-// листенере. Управление — под /__test/, фейковый planner — под /__tasks/.
 package main
 
 import (
@@ -59,8 +55,6 @@ func main() {
 		host = "127.0.0.1"
 	}
 
-	// Порт занимаем до чистки каталога: второй экземпляр на том же порту не должен
-	// стереть БД работающего.
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "listen:", err)
@@ -69,7 +63,6 @@ func main() {
 
 	dataDir := *data
 	if dataDir == "" {
-		// Каталог чистится при старте: после SIGKILL (так Playwright гасит webServer) БД не копятся.
 		dataDir = filepath.Join(os.TempDir(), "uitest-server-"+port)
 		if err := os.RemoveAll(dataDir); err != nil {
 			fmt.Fprintln(os.Stderr, "data dir:", err)
@@ -124,8 +117,6 @@ func main() {
 	}
 }
 
-// server держит активный стек за RWMutex: reset ждёт завершения запросов
-// в полёте, подменяет стек и только потом сносит старый.
 type server struct {
 	dataDir   string
 	web       fs.FS

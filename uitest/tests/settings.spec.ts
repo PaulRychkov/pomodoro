@@ -19,7 +19,6 @@ import {
 
 const mm = (minutes: number) => `${String(minutes).padStart(2, "0")}:00`;
 
-/** Возврат на таймер после настроек: PlanToday монтируется заново и читает свежий план. */
 async function backToTimer(ui: PomodoroPage): Promise<void> {
   await ui.gotoTimer();
   await waitForPlan(ui.page);
@@ -34,7 +33,6 @@ async function setSwitch(page: Page, testid: string, on: boolean): Promise<void>
 test.describe("границы дня", () => {
   test("07:00–18:00: ни один помидор не выходит за активный день, вечерней группы нет", async ({ page, request }, info) => {
     const ui = await boot(request, page);
-    // До правки в плане есть вечерняя группа 19:00–20:00 и утренняя 06:00–06:40.
     const before = await readPlan(page);
     expect(before.some((g) => g.periodStart === toMinutes("19:00"))).toBe(true);
 
@@ -59,7 +57,6 @@ test.describe("границы дня", () => {
     }
     expect(groups.some((g) => g.periodStart === toMinutes("19:00")), "вечерняя группа 19:00–20:00 исчезла").toBe(false);
     expect(groups.some((g) => g.periodEnd === toMinutes("06:40")), "утренняя группа 06:00–06:40 исчезла").toBe(false);
-    // «Зал» и «Дорога» вырезают 07:00–08:00: утро начинается в 08:00, второе окно закрывается в 18:00.
     expect(groups.filter((g) => g.kind === "period").map((g) => [g.periodStart, g.periodEnd, g.windowId])).toEqual([
       [toMinutes("08:00"), toMinutes("10:00"), ""],
       [toMinutes("10:00"), toMinutes("14:00"), WORK_ID],
@@ -67,7 +64,6 @@ test.describe("границы дня", () => {
     ]);
     await expect(page.getByTestId("next-start")).toContainText("по плану в 08:00");
 
-    // Границы дня переживают перезагрузку.
     await reloadPlan(page);
     expectPlanValid(await readPlan(page), { dayStart: 7 * 60, dayEnd: 18 * 60, noAdjacentOthers: true });
   });
@@ -86,21 +82,17 @@ test.describe("границы дня", () => {
     await expect(page.getByTestId("set-day-start")).toHaveAttribute("aria-invalid", "true");
     await expect(page.getByTestId("set-day-end")).toHaveAttribute("aria-invalid", "true");
     await expectNoHorizontalScroll(page, info);
-    // Ничего не ушло на сервер.
     const stored = await getSettings(request);
     expect(stored.day_start_minutes).toBe(6 * 60);
     expect(stored.day_end_minutes).toBe(20 * 60);
 
-    // Ровно 30 минут — допустимо.
     await page.getByTestId("set-day-end").fill("07:30");
     await expect(error).toHaveCount(0);
     await expect(save).toBeEnabled();
-    // Конец раньше начала — тоже ошибка.
     await page.getByTestId("set-day-end").fill("06:00");
     await expect(error).toBeVisible();
     await expect(save).toBeDisabled();
 
-    // Исправили (07:00–19:00) — сохраняется.
     await page.getByTestId("set-day-end").fill("19:00");
     await expect(error).toHaveCount(0);
     await saveSettings(page);
@@ -140,10 +132,8 @@ test.describe("доля помидоров окна", () => {
       if (share === 0) {
         expect(allSlots(groups).some(isWork), "«Работа» нигде в плане").toBe(false);
         for (const g of wins) expect(g.counter?.count).toBe(0);
-        // Окно остаётся окном: помидоры в нём есть и заняты другими задачами.
         for (const g of wins) expect(g.slots.length).toBeGreaterThan(0);
       }
-      // Свободное время не затронуто настройкой окна: «Работа» вне окна не появляется.
       for (const g of groups.filter((x) => x.kind === "period" && !x.windowId)) {
         expect(g.slots.some(isWork)).toBe(false);
       }
@@ -173,11 +163,9 @@ test.describe("длительности и блоки", () => {
     expect(Math.min(...focuses), "помидор ужимается не ниже 2/3 от 30").toBeGreaterThanOrEqual(20);
     for (const s of slots) expect(s.end! - s.start!).toBe(Number(s.focus));
 
-    // Циферблат в простое показывает первый слот нового плана.
     await expect(ui.digits).toHaveText(mm(focuses[0]));
     await reloadPlan(page);
     await expect(ui.digits).toHaveText(mm(focuses[0]));
-    // Фокус стартует с этой длиной.
     await ui.startFocus();
     expect((await getState(request)).planned_seconds).toBe(focuses[0] * 60);
   });
@@ -206,7 +194,6 @@ test.describe("длительности и блоки", () => {
     const blocks = page.getByTestId("set-block");
     await expect(blocks).toHaveCount(1);
     await expect(blocks.first()).toHaveValue("3");
-    // Единственный блок удалить нельзя.
     await expect(page.getByTestId("set-block-remove")).toBeDisabled();
 
     await page.getByTestId("set-block-add").click();
@@ -217,7 +204,6 @@ test.describe("длительности и блоки", () => {
     expect((await getSettings(request)).day_blocks).toEqual([3, 5]);
     await expectNoHorizontalScroll(page, info);
 
-    // Удаляем первый блок: остаётся [5], длинный перерыв после каждого пятого помидора.
     await page.locator('[data-testid="set-block-remove"][data-index="0"]').click();
     await expect(blocks).toHaveCount(1);
     await expect(blocks.first()).toHaveValue("5");
@@ -227,7 +213,6 @@ test.describe("длительности и блоки", () => {
     await backToTimer(ui);
     await expect(page.getByTestId("app-error")).toHaveCount(0);
     expectPlanValid(await readPlan(page), { noAdjacentOthers: true });
-    // Настройка переживает перезагрузку.
     await page.reload();
     await ui.gotoSettings();
     await expect(page.getByTestId("set-block")).toHaveCount(1);
@@ -254,14 +239,12 @@ test.describe("автостарт", () => {
     const focusSeconds = (await getState(request)).planned_seconds;
     await advance(request, focusSeconds + 2);
 
-    // Перерыв пошёл сам, длиной из слота.
     await expect(page.getByTestId("phase-title")).toHaveAttribute("data-phase", /^(short|long)_break$/);
     await expect(page.getByTestId("now-title")).toHaveAttribute("data-kind", "break");
     const st = await getState(request);
     expect(st.planned_seconds).toBe(breakMin * 60);
     expect(st.completed_today).toBe(1);
 
-    // Перерыв закончился — стартовал помидор №2 со своей длиной из плана.
     await advance(request, breakMin * 60 + 2);
     await expect(page.getByTestId("phase-title")).toHaveAttribute("data-phase", "focus");
     await expect(page.getByTestId("phase-title")).toContainText("помидор 2");
@@ -279,7 +262,6 @@ test.describe("автостарт", () => {
     await advance(request, (await getState(request)).planned_seconds + 2);
     await expect(ui.btnFocus).toBeVisible();
     await expect(page.getByTestId("phase-title")).toHaveAttribute("data-phase", "idle");
-    // Прошло много времени — всё равно ничего само не стартует.
     await advance(request, 600);
     await page.waitForTimeout(1_500);
     await expect(page.getByTestId("phase-title")).toHaveAttribute("data-phase", "idle");
@@ -317,7 +299,6 @@ test.describe("пресеты помидорного дня", () => {
     expect(schedule).toEqual([{ weekday, preset_name: "Тест" }]);
     await expectNoHorizontalScroll(page, info);
 
-    // Опаздываем до 08:40 и перестраиваем план: раскладка идёт по длительностям пресета, но в границах периодов.
     await setClock(request, "08:40");
     await page.reload();
     await waitForPlan(page);
@@ -334,13 +315,10 @@ test.describe("пресеты помидорного дня", () => {
       expect(Number(s.focus), `длительность фокуса слота #${i}`).toBe(presetFocus[i]);
       expect(Number(s.brk), `длительность перерыва слота #${i}`).toBe(presetBreak[i]);
     });
-    // Для сравнения: без пресета в 08:40 первый помидор был бы другой длины.
     expect(Number(slots[0].focus)).toBe(17);
     await expect(ui.digits).toHaveText(mm(17));
-    // Окно по-прежнему начинается в 10:00.
     expect(windowGroups(groups)[0].slots[0].start).toBe(toMinutes("10:00"));
 
-    // Удаление пресета: строка и назначение пропадают.
     await ui.gotoSettings();
     await expect(todaySelect).toHaveValue("Тест");
     await page.locator('[data-testid="preset-delete"][data-name="Тест"]').click();
@@ -349,7 +327,6 @@ test.describe("пресеты помидорного дня", () => {
     await expect(page.getByTestId("preset-error")).toHaveCount(0);
     expect(await (await request.get("/api/v1/rpc/preset-schedule")).json()).toEqual([]);
 
-    // После удаления обновление плана возвращает автораскладку.
     await backToTimer(ui);
     await page.getByTestId("plan-refresh").click();
     await expect(page.getByTestId("plan-refresh")).toBeEnabled();
@@ -377,7 +354,6 @@ test.describe("звук", () => {
     const ui = await boot(request, page, { now: "08:00" });
     expect(await plays(page)).toEqual([]);
 
-    // Включаем звук явно (по умолчанию включён) и сохраняем.
     await ui.gotoSettings();
     await setSwitch(page, "set-sound", true);
     await saveSettings(page);
@@ -391,7 +367,6 @@ test.describe("звук", () => {
     expect((await plays(page))[0]).toContain("/sound/default");
     await expect(ui.btnFocus).toBeVisible();
 
-    // Выключаем звук: следующий конец фокуса — без вызова play.
     await ui.gotoSettings();
     await setSwitch(page, "set-sound", false);
     await saveSettings(page);
@@ -403,7 +378,6 @@ test.describe("звук", () => {
     await advance(request, (await getState(request)).planned_seconds + 2);
     await expect(page.getByTestId("day-counter")).toHaveAttribute("data-completed", "2");
     await expect(ui.btnFocus).toBeVisible();
-    // Опрос состояния — раз в секунду; ждём заведомо больше.
     await page.waitForTimeout(2_500);
     expect((await plays(page)).length, "звук выключен — play не вызывался").toBe(played);
   });

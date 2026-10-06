@@ -2,16 +2,12 @@ import { defineConfig, devices } from "@playwright/test";
 
 const port = Number(process.env.UITEST_PORT ?? 18090);
 const baseURL = `http://127.0.0.1:${port}`;
-// Каталог собранного фронтенда (по умолчанию frontend/dist).
 const web = process.env.UITEST_WEB ?? "../frontend/dist";
 
-// Часовой пояс браузера совпадает с -tz сервера: время сессий в списке рисуется
-// через toLocaleTimeString, и тесты сверяют его с часами сервера.
 const timezoneId = "Asia/Qyzylorda";
 
 export default defineConfig({
   testDir: "./tests",
-  // Один сервер с общим состоянием (БД, часы, фейковый planner) — тесты идут строго по очереди.
   workers: 1,
   fullyParallel: false,
   timeout: 45_000,
@@ -24,7 +20,6 @@ export default defineConfig({
     locale: "ru-RU",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
-    // Chromium берётся из PLAYWRIGHT_BROWSERS_PATH; если нужен конкретный бинарник — UITEST_CHROMIUM.
     launchOptions: process.env.UITEST_CHROMIUM ? { executablePath: process.env.UITEST_CHROMIUM } : {},
   },
   projects: [
@@ -41,7 +36,6 @@ export default defineConfig({
     },
   ],
   webServer: {
-    // Фронтенд собирается заранее: npm --prefix ../frontend run build.
     command: `go run ../cmd/uitest-server -addr 127.0.0.1:${port} -web ${web}`,
     url: `${baseURL}/__test/clock`,
     reuseExistingServer: !process.env.CI,

@@ -17,7 +17,6 @@ function slotTitle(slot: PlanSlot | undefined): string | null {
   return slot.label ?? null;
 }
 
-// Причины push-события, после которых нужно перечитать список помидоров и план дня.
 const SESSION_REASONS = new Set(["completed", "stopped", "relabeled", "started", "paused", "resumed", "day_rolled"]);
 
 function fmt(seconds: number): string {
@@ -191,7 +190,6 @@ export default function App() {
   const fraction = active && state.planned_seconds > 0 ? remaining / state.planned_seconds : 1;
   const focusing = state.phase === "focus";
   const earnedNow = focusing ? creditTwelfths(state.planned_seconds - remaining, state.planned_seconds) : 0;
-  // В idle длительность следующей сессии отдаёт движок по плану дня; настройки — только запасной вариант.
   const idleSeconds =
     state.next_planned_seconds > 0
       ? state.next_planned_seconds

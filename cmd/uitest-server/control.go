@@ -15,8 +15,6 @@ type resetRequest struct {
 	Settings json.RawMessage `json:"settings"`
 }
 
-// reset пересоздаёт весь стек с чистой БД. Часы и фейковый planner выставляются
-// до сборки: engine.Init и план читают время и задачи сразу.
 func (s *server) reset(req resetRequest) error {
 	s.resetMu.Lock()
 	defer s.resetMu.Unlock()
@@ -134,7 +132,6 @@ func (s *server) registerControl(mux *http.ServeMux) {
 			writeControlError(w, badRequest{errors.New("now or advance_seconds is required")})
 			return
 		}
-		// Tick сразу, а не через 300 мс: к ответу истёкшие сессии уже завершены.
 		if err := s.tick(); err != nil {
 			writeControlError(w, err)
 			return

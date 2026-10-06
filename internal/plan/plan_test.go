@@ -46,7 +46,6 @@ func blockedTask(id, title string, startMin, durMin int) tasksclient.DueTask {
 	return d
 }
 
-// pavelsDay — будний день Павла: зал утром, «Работа» 10:00–19:00 с обедом.
 func pavelsDay() []tasksclient.DueTask {
 	return []tasksclient.DueTask{
 		blockedTask("prep", "Сборы в зал", 400, 20),
@@ -105,10 +104,6 @@ func inWindow(slots []models.PlanSlot, id string) []models.PlanSlot {
 	return out
 }
 
-// checkInvariants — правила, которые план обязан соблюдать при любых
-// настройках: помидор целиком внутри своего периода и активного дня, не
-// пересекается с событиями без помидоров и с соседями, задача окна стоит
-// только в своём окне, «не влезшие» — в хвосте и без времени.
 func checkInvariants(t *testing.T, settings models.Settings, due []tasksclient.DueTask, slots []models.PlanSlot) {
 	t.Helper()
 	dayStart, dayEnd := dayBounds(settings)
@@ -233,8 +228,6 @@ func TestPavelsWeekdayPlan(t *testing.T) {
 	slots := build(settings, due, 360)
 	checkInvariants(t, settings, due, slots)
 	main := scheduled(slots)
-	// 6:00–6:40 — два помидора по 17 минут (больше чистого фокуса, чем один
-	// на 25), 8:00–10:00 — четыре, по восемь в каждой половине работы, два вечером.
 	if len(main) != 24 {
 		t.Fatalf("день 6:00–20:00 вмещает 24 помидора, получено %d: %v", len(main), taskIDs(main))
 	}

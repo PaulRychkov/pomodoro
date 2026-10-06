@@ -6,7 +6,6 @@ import type { PickerNode, Phase, PlanSlot, SlotPatch } from "../types";
 import TaskTreePicker from "./TaskTreePicker";
 
 interface PlanTodayProps {
-  /** Растёт при событиях, после которых план/сессии нужно перечитать (старт, стоп, настройки...). */
   version: number;
   completedToday: number;
   phase: Phase;
@@ -16,7 +15,6 @@ interface PlanTodayProps {
   onPlanChanged: (plan: PlanSlot[]) => void;
 }
 
-// Проекция времён зависит от часов, поэтому план перечитывается раз в минуту.
 const REFETCH_MS = 60_000;
 
 interface Group {
@@ -72,7 +70,6 @@ function buildGroups(plan: PlanSlot[]): Group[] {
   return groups;
 }
 
-/** Слот принадлежит задаче окна, если его задача — само окно (по id) либо носит название окна. */
 function isWindowSlot(s: PlanSlot, g: Group): boolean {
   if (!s.task) return false;
   if (g.windowId && s.task.external_id === g.windowId) return true;
@@ -93,8 +90,6 @@ export default function PlanToday({
   const [busy, setBusy] = useState(false);
   const [pickerFor, setPickerFor] = useState<number | null>(null);
 
-  // Ответы приходят асинхронно и могут обгонять друг друга. Чтение применяется, только если оно самое
-  // свежее и после его старта не завершилась запись (ответ записи всегда авторитетен).
   const readSeq = useRef(0);
   const writeEpoch = useRef(0);
   const onPlanChangedRef = useRef(onPlanChanged);
@@ -132,7 +127,6 @@ export default function PlanToday({
     void loadTree();
   }, [version]);
 
-  // Перечитываем план при событиях движка и при смене числа выполненных / фазы / паузы.
   useEffect(() => {
     fetchPlan();
   }, [fetchPlan, version, completedToday, phase, paused]);
@@ -182,7 +176,6 @@ export default function PlanToday({
     return null;
   };
 
-  // Перерыв, который движок возьмёт при следующем старте, — после последнего выполненного помидора.
   const breakLock = (s: PlanSlot): string | null => {
     if (!s.done) return null;
     if (idle && s.idx === completedToday - 1) return null;
@@ -257,8 +250,6 @@ export default function PlanToday({
                         "flex items-center gap-1.5 rounded-lg px-1 py-0.5 " +
                         (s.done ? "opacity-45 " : "") +
                         (muted ? "opacity-70 " : "") +
-                        // opacity создаёт свой контекст наложения: строку с открытым
-                        // пикером поднимаем над соседними, иначе они перекроют список
                         (pickerFor === s.idx ? "relative z-30 " : "") +
                         (isActive ? "bg-primary/10 ring-1 ring-primary/40" : "")
                       }

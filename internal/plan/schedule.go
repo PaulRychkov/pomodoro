@@ -13,19 +13,14 @@ type activeSlot struct {
 	isFocus      bool
 }
 
-// dayRuntime — факт дня в минутах от полуночи.
 type dayRuntime struct {
-	now       int
-	completed int
-	// past — старты сделанных помидоров по возрастанию.
-	past   []int
-	active *activeSlot
-	// lastFocusEnd — конец последнего помидора, если после него ещё не было
-	// перерыва (перерыв «ждёт»); -1 — нет.
+	now          int
+	completed    int
+	past         []int
+	active       *activeSlot
 	lastFocusEnd int
 }
 
-// frozen — слоты, которые пересборка не трогает: сделанные и идущий фокус.
 func (rt dayRuntime) frozen() int {
 	if rt.active != nil && rt.active.isFocus {
 		return rt.completed + 1
@@ -34,19 +29,11 @@ func (rt dayRuntime) frozen() int {
 }
 
 type projection struct {
-	// starts — прогноз старта каждого слота; -1 — у слота нет места в дне.
-	starts []int
-	// from — с какой минуты свободен остаток дня (после идущего помидора
-	// или перерыва).
-	from int
-	// displaced — несделанный слот уже не успевает закончиться в своём периоде.
+	starts    []int
+	from      int
 	displaced bool
 }
 
-// project считает время каждого слота от факта: сделанные показывают реальный
-// старт, идущий держит свой, остальные идут цепочкой от текущего момента, но
-// не раньше своего планового времени и никогда не выходя за конец своего
-// периода (окна, свободного промежутка, активного дня).
 func project(rows []models.PlanSlot, rt dayRuntime) projection {
 	p := projection{starts: make([]int, len(rows))}
 	for i := range p.starts {

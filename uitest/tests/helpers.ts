@@ -1,13 +1,7 @@
 import { expect, type APIRequestContext, type APIResponse, type Locator, type Page } from "@playwright/test";
 
-// ---------------------------------------------------------------------------
-// Управление тестовым сервером (cmd/uitest-server): /__test/*
-// ---------------------------------------------------------------------------
-
-/** Время сегодняшнего дня в tz сервера: 05:50 — за десять минут до начала активного дня (06:00). */
 export const DEFAULT_NOW = "05:50";
 
-/** Фикстура без задач: помидоры не привязаны к плану, длительности берутся из настроек. */
 export const NO_TASKS = { tasks: [] };
 
 export interface PomodoroState {
@@ -32,11 +26,8 @@ export interface ClockInfo {
 }
 
 export interface ResetOptions {
-  /** RFC3339, «2026-10-05T05:50:00» (tz сервера) или «05:50» — это время сегодняшнего дня. */
   now?: string;
-  /** Подмена фикстуры task-planner: {tasks?, topics?} или просто массив задач. */
   tasks?: unknown;
-  /** Частичные настройки поверх models.DefaultSettings(). */
   settings?: Record<string, unknown>;
 }
 
@@ -56,7 +47,6 @@ async function json<T>(res: APIResponse): Promise<T> {
   return (await res.json()) as T;
 }
 
-/** Пересоздаёт весь бэкенд (чистая БД, новый движок/план) и ставит часы. */
 export async function reset(request: APIRequestContext, opts: ResetOptions = {}): Promise<ClockInfo> {
   return json(await request.post("/__test/reset", { data: { now: DEFAULT_NOW, ...opts } }));
 }
@@ -65,7 +55,6 @@ export async function setClock(request: APIRequestContext, now: string): Promise
   return json(await request.post("/__test/clock", { data: { now } }));
 }
 
-/** Сдвигает часы вперёд; сервер сразу делает Tick, так что истёкшие сессии завершены к моменту ответа. */
 export async function advance(request: APIRequestContext, seconds: number): Promise<ClockInfo> {
   return json(await request.post("/__test/clock", { data: { advance_seconds: seconds } }));
 }
@@ -90,11 +79,6 @@ export async function getState(request: APIRequestContext): Promise<PomodoroStat
 export async function getSettings(request: APIRequestContext): Promise<Record<string, unknown>> {
   return json(await request.get("/api/v1/settings"));
 }
-
-// ---------------------------------------------------------------------------
-// Page object главного экрана. Основа — data-testid; запасные селекторы по роли
-// и тексту (русские подписи) работают на сборке без testid.
-// ---------------------------------------------------------------------------
 
 export class PomodoroPage {
   readonly phaseTitle: Locator;
@@ -141,7 +125,6 @@ export class PomodoroPage {
     await expect(this.digits).toBeVisible();
   }
 
-  /** Остаток на циферблате в секундах. */
   async seconds(): Promise<number> {
     const text = (await this.digits.textContent()) ?? "";
     const m = /^(\d+):(\d\d)$/.exec(text.trim());
@@ -149,7 +132,6 @@ export class PomodoroPage {
     return Number(m[1]) * 60 + Number(m[2]);
   }
 
-  /** Клик «Фокус» и ожидание, пока циферблат покажет идущую сессию (UI узнаёт о ней из опроса состояния). */
   async startFocus(): Promise<void> {
     await this.btnFocus.click();
     await expect(this.phaseTitle).toContainText("Фокус");

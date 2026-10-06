@@ -16,9 +16,6 @@ func matrixSettings(focusMin, shortMin, longMin, start, end, share int, blocks .
 	return s
 }
 
-// Перебор настроек и моментов пересборки: при любых длительностях, блоках,
-// границах дня, доле окна и времени пересчёта план соблюдает инварианты, доля
-// окна держится, а свежий план не вытеснен прогнозом в момент сборки.
 func TestSettingsMatrixKeepsPlanConsistent(t *testing.T) {
 	due := pavelsDay()
 	for _, focus := range []int{15, 25, 50} {
@@ -59,8 +56,6 @@ func checkWindowShare(t *testing.T, settings models.Settings, slots []models.Pla
 	}
 }
 
-// Пересборка посреди дня после сделанных помидоров не меняет сделанное и
-// держит долю окна от всего окна целиком.
 func TestRebuildAfterProgressKeepsShare(t *testing.T) {
 	settings := settingsDay(360, 1200, 3)
 	due := pavelsDay()

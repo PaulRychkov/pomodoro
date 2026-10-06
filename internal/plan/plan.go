@@ -21,18 +21,13 @@ type Service struct {
 	Tasks     *tasksclient.Client
 	Settings  func() models.Settings
 	Completed func() int
-	// Now — часы плана; nil означает time.Now. Подменяются в тестах.
-	Now func() time.Time
+	Now       func() time.Time
 
-	// building — Day и SetSlot по одному: их зовут и UI, и REST/MCP, и
-	// уведомления движка. Под ним можно звать движок; mu — нельзя.
 	building sync.Mutex
 	mu       sync.Mutex
 	cached   dayCache
 }
 
-// dayCache — последний построенный план дня. Его читает движок под своей
-// блокировкой, поэтому тут нельзя звать ни Settings, ни Completed.
 type dayCache struct {
 	date   string
 	rows   []models.PlanSlot
@@ -65,8 +60,6 @@ func (s *Service) cachedRows() ([]models.PlanSlot, bool) {
 	return s.cached.rows, true
 }
 
-// Blocks — размеры блоков сегодняшнего плана по порядку (длинный перерыв
-// после каждого блока); nil, если план дня ещё не построен.
 func (s *Service) Blocks() []int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -77,22 +70,20 @@ func (s *Service) Blocks() []int {
 }
 
 type SlotView struct {
-	Idx          int             `json:"idx"`
-	Task         *models.TaskRef `json:"task"`
-	Label        *string         `json:"label"`
-	FocusMinutes *int            `json:"focus_minutes"`
-	BreakMinutes *int            `json:"break_minutes"`
-	StartMinutes *int            `json:"start_minutes"`
-	EndMinutes   *int            `json:"end_minutes"`
-	// Период дня, в который уложен слот: свободное время или окно задачи
-	// с фиксированным временем (WindowID/WindowTitle — задача окна).
-	PeriodStartMinutes *int    `json:"period_start_minutes"`
-	PeriodEndMinutes   *int    `json:"period_end_minutes"`
-	WindowID           *string `json:"window_id"`
-	WindowTitle        *string `json:"window_title"`
-	Pinned             bool    `json:"pinned"`
-	Done               bool    `json:"done"`
-	Overflow           bool    `json:"overflow"`
+	Idx                int             `json:"idx"`
+	Task               *models.TaskRef `json:"task"`
+	Label              *string         `json:"label"`
+	FocusMinutes       *int            `json:"focus_minutes"`
+	BreakMinutes       *int            `json:"break_minutes"`
+	StartMinutes       *int            `json:"start_minutes"`
+	EndMinutes         *int            `json:"end_minutes"`
+	PeriodStartMinutes *int            `json:"period_start_minutes"`
+	PeriodEndMinutes   *int            `json:"period_end_minutes"`
+	WindowID           *string         `json:"window_id"`
+	WindowTitle        *string         `json:"window_title"`
+	Pinned             bool            `json:"pinned"`
+	Done               bool            `json:"done"`
+	Overflow           bool            `json:"overflow"`
 }
 
 type SlotUpdate struct {
@@ -108,9 +99,6 @@ type ScheduleEntry struct {
 	PresetName string `json:"preset_name"`
 }
 
-// Day возвращает план дня с прогнозом времени. План строится, когда его ещё
-// нет или просят пересобрать, и пересчитывается сам, если какой-то
-// несделанный помидор уже не успевает закончиться внутри своего периода.
 func (s *Service) Day(ctx context.Context, refresh bool) ([]SlotView, error) {
 	s.building.Lock()
 	defer s.building.Unlock()
@@ -192,8 +180,6 @@ func (s *Service) day(ctx context.Context, refresh bool) ([]SlotView, error) {
 	return views, nil
 }
 
-// needsLayout — в плане есть несделанные слоты без места в дне (план
-// построен старой версией без привязки ко времени).
 func needsLayout(rows []models.PlanSlot, frozen int) bool {
 	for _, sl := range rows {
 		if sl.Idx >= frozen && !sl.Overflow && (sl.StartMin == nil || sl.PeriodEndMin == nil) {
@@ -203,9 +189,6 @@ func needsLayout(rows []models.PlanSlot, frozen int) bool {
 	return false
 }
 
-// windowsChanged — окна дня разошлись с планом: впереди есть окно, под
-// которое в плане нет ни одного помидора (план строился без задач или окно
-// появилось позже), или несделанные помидоры стоят в окне, которого больше нет.
 func windowsChanged(rows []models.PlanSlot, frozen int, ps []period, now int, d durations) bool {
 	planned := map[string]bool{}
 	for _, sl := range rows {
@@ -234,8 +217,6 @@ func windowsChanged(rows []models.PlanSlot, frozen int, ps []period, now int, d 
 	return false
 }
 
-// runtime собирает фактическое состояние дня: сколько сделано, когда
-// начинались сделанные помидоры, что идёт сейчас и не ждёт ли перерыв.
 func (s *Service) runtime(ctx context.Context, now time.Time) dayRuntime {
 	rt := dayRuntime{now: minuteOfDay(now), completed: s.Completed(), lastFocusEnd: -1}
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
@@ -323,8 +304,6 @@ func (s *Service) SetSlot(ctx context.Context, idx int, upd SlotUpdate) ([]SlotV
 	return s.day(ctx, true)
 }
 
-// SlotDurations — длительности фокуса и перерыва слота idx. Читает кеш плана:
-// движок зовёт это под своей блокировкой.
 func (s *Service) SlotDurations(idx int) (focusSeconds, breakSeconds *int) {
 	rows, ok := s.cachedRows()
 	if !ok {
@@ -375,8 +354,6 @@ func (s *Service) HandleFocusCompleted(ctx context.Context) (string, bool, error
 		if sl.Idx >= completed && sl.TaskExternalID != nil && *sl.TaskExternalID == ext {
 			return ext, false, nil
 		}
-		// Окно с фиксированным временем не закрываем раньше его конца:
-		// иначе при пересборке его время отдалось бы другим задачам.
 		if sl.WindowID != nil && *sl.WindowID == ext && sl.PeriodEndMin != nil && *sl.PeriodEndMin > nowMin {
 			return ext, false, nil
 		}

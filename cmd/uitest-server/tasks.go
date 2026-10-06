@@ -34,9 +34,6 @@ type fixture struct {
 	Topics []fakeTopic `json:"topics"`
 }
 
-// UnmarshalJSON принимает и объект {tasks, topics}, и просто массив задач.
-// Пропущенный ключ оставляет соответствующую часть пустой — вызывающий решает,
-// чем её заменить (см. mergeFixture).
 func (f *fixture) UnmarshalJSON(b []byte) error {
 	if strings.HasPrefix(strings.TrimSpace(string(b)), "[") {
 		return json.Unmarshal(b, &f.Tasks)
@@ -56,15 +53,13 @@ type occurrence struct {
 
 type tasksLogEntry struct {
 	At           time.Time `json:"at"`
-	Kind         string    `json:"kind"` // progress | complete
+	Kind         string    `json:"kind"`
 	OccurrenceID string    `json:"occurrence_id"`
 	TaskID       string    `json:"task_id"`
 	Date         string    `json:"date"`
 	Minutes      int       `json:"minutes,omitempty"`
 }
 
-// fakeTasks — подмена task-planner: у каждой задачи на каждый запрошенный день
-// есть одно вхождение; complete переводит его в completed, progress копит минуты.
 type fakeTasks struct {
 	clock *fakeClock
 	loc   *time.Location
@@ -81,9 +76,6 @@ func newFakeTasks(clock *fakeClock, loc *time.Location) *fakeTasks {
 	return &fakeTasks{clock: clock, loc: loc}
 }
 
-// Reset начинает новое поколение: клиенты, созданные для прошлого стека, ходят по
-// /__tasks/g<N>/... и после reset получают 410 — запоздавшая горутина старого стека
-// не успеет записать вызов в журнал следующего теста.
 func (t *fakeTasks) Reset(fx fixture) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -95,7 +87,6 @@ func (t *fakeTasks) Reset(fx fixture) int {
 	return t.gen
 }
 
-// Replace меняет фикстуру, не трогая журнал вызовов и выполненные вхождения.
 func (t *fakeTasks) Replace(fx fixture) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -273,8 +264,6 @@ func (t *fakeTasks) complete(w http.ResponseWriter, r *http.Request) {
 
 func ptr[T any](v T) *T { return &v }
 
-// defaultFixture — будний день пользователя: события без помидоров, окно «Работа»
-// и гибкие задачи с трудоёмкостью в минутах.
 func defaultFixture() fixture {
 	career, learning, ai := "topic-career", "topic-learning", "topic-ai"
 	event := func(id, title string, start, dur int) fakeTask {

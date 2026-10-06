@@ -9,8 +9,6 @@ import {
   type ResetOptions,
 } from "./helpers";
 
-// Таймерные сценарии не зависят от плана дня: задач нет, длительности — из настроек
-// (фокус 25 мин, короткий перерыв 5, длинный 15, блоки дня 4+4).
 async function boot(request: APIRequestContext, page: Page, opts: ResetOptions = {}): Promise<PomodoroPage> {
   await reset(request, { tasks: NO_TASKS, ...opts });
   const ui = new PomodoroPage(page);
@@ -18,7 +16,6 @@ async function boot(request: APIRequestContext, page: Page, opts: ResetOptions =
   return ui;
 }
 
-/** Фокус до конца по часам сервера: старт, прыжок за плановую длительность, ожидание idle в UI. */
 async function completeFocus(request: APIRequestContext, ui: PomodoroPage): Promise<void> {
   await ui.startFocus();
   const { planned_seconds } = await getState(request);
@@ -65,7 +62,6 @@ test.describe("фокус", () => {
     await page.waitForTimeout(2_500);
     expect(await ui.seconds()).toBe(frozen);
 
-    // Пока идёт пауза, часы сервера уезжают на две минуты — остаток не должен просесть.
     await advance(request, 120);
     await page.waitForTimeout(1_500);
     expect(await ui.seconds()).toBe(frozen);
@@ -86,7 +82,6 @@ test.describe("фокус", () => {
     const ui = await boot(request, page);
     await ui.startFocus();
 
-    // Ровно половина фокуса по часам сервера.
     await advance(request, 750);
     await expect(ui.creditHint).toContainText("½");
 
@@ -139,7 +134,6 @@ test.describe("фокус", () => {
     expect(st.credit_today).toBe(0);
     expect(st.next_phase).toBe("focus");
 
-    // Брошенный помидор попадает в список «Помидоры сегодня», но с нулевым зачётом.
     await expect(ui.sessionRows).toHaveCount(1);
     await expect(ui.creditBadge(ui.sessionRows.first())).toHaveText("0");
   });
@@ -181,7 +175,6 @@ test.describe("перерыв", () => {
     await expect(ui.btnFocus).toBeVisible();
     await expect(ui.phaseTitle).toContainText("Готов к фокусу");
     expect((await getState(request)).phase).toBe("idle");
-    // Остановка перерыва не трогает счётчик дня.
     await expect(ui.dayCounter).toContainText("Сегодня: 1 из");
   });
 
@@ -284,7 +277,6 @@ test.describe("настройки", () => {
     await ui.gotoTimer();
     await expect(ui.digits).toHaveText("20:00");
 
-    // Настройка пережила перезагрузку страницы и действует на новый помидор.
     await page.reload();
     await expect(ui.digits).toHaveText("20:00");
     await ui.startFocus();

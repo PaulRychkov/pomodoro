@@ -21,11 +21,6 @@ import {
   windowGroups,
 } from "./plan-helpers";
 
-// План дня 06:00–20:00 режется на периоды: свободное время между событиями и окна («Работа»).
-// Фикстура по умолчанию: «Сборы в зал» 06:40–07:00, «Зал» 07:00–07:40, «Дорога» 07:40–08:00 и «Обед» 14:00–15:00
-// вырезаются (без помидоров); окно «Работа» 10:00–19:00 с помидорами; гибкие задачи — «Поиск работы» (120 мин),
-// «Работа с ИИ и другое» (75), «Английский» (60), «Слепая печать» (40).
-
 const mm = (minutes: number) => `${String(minutes).padStart(2, "0")}:00`;
 
 test.describe("раскладка дня", () => {
@@ -33,7 +28,6 @@ test.describe("раскладка дня", () => {
     await boot(request, page);
     const groups = await readPlan(page);
 
-    // Периоды: 06:00–06:40, 08:00–10:00, окно 10:00–14:00, окно 15:00–19:00, 19:00–20:00.
     const periods = groups
       .filter((g) => g.kind === "period")
       .map((g) => [g.periodStart, g.periodEnd, g.windowId]);
@@ -49,7 +43,6 @@ test.describe("раскладка дня", () => {
     expect(titles).toContain("10:00–14:00 · Работа");
     expect(titles).toContain("15:00–19:00 · Работа");
 
-    // Каждый слот лежит целиком в своём периоде и в активном дне (≤ 20:00), слоты идут по времени.
     expectPlanValid(groups, { noAdjacentOthers: true });
     for (const g of groups.filter((x) => x.kind === "period")) {
       expect(g.slots.length, `в группе ${g.title} есть помидоры`).toBeGreaterThan(0);
@@ -58,7 +51,6 @@ test.describe("раскладка дня", () => {
       expect(s.end as number).toBeLessThanOrEqual(1200);
     }
 
-    // 67% помидоров окна — задаче окна: 11 «Работа» из 16 (считается по всему окну «10:00–19:00», не по половинкам).
     const wins = windowGroups(groups);
     expect(wins).toHaveLength(2);
     const total = wins.reduce((n, g) => n + g.slots.length, 0);
@@ -66,12 +58,10 @@ test.describe("раскладка дня", () => {
     expect(total).toBe(16);
     expect(work).toBe(11);
     expect(wins.reduce((n, g) => n + g.slots.filter(isWork).length, 0)).toBe(11);
-    // Свободные периоды вне окон — только другие задачи.
     for (const g of groups.filter((x) => x.kind === "period" && !x.windowId)) {
       expect(g.slots.some(isWork), `«Работа» в свободном периоде ${g.title}`).toBe(false);
     }
 
-    // Что не влезло в день — в отдельной группе без времени, а не в хвосте дня.
     const over = overflowGroup(groups);
     if (over) {
       expect(over.title).toContain("Не влезли в день");
@@ -84,14 +74,11 @@ test.describe("раскладка дня", () => {
   test("в свободное время помидоры занимают только другие задачи, окно — своё время", async ({ page, request }) => {
     await boot(request, page);
     const groups = await readPlan(page);
-    // Задача окна не появляется вне окна даже в overflow.
     const outside = allSlots(groups).filter((s) => isWork(s) && s.windowId !== WORK_ID);
     expect(outside).toEqual([]);
-    // Слот окна знает своё окно.
     for (const g of windowGroups(groups)) {
       for (const s of g.slots) expect(s.windowId).toBe(WORK_ID);
     }
-    // Часы и точное время слотов: подпись slot-start совпадает с data-start.
     for (const s of committed(groups)) expect(s.startText).toBe(fmClock(s.start as number));
   });
 });
@@ -114,7 +101,6 @@ test.describe("циферблат в простое", () => {
 
     const st = (await getState(request)) as { next_planned_seconds?: number };
     expect(st.next_planned_seconds).toBe(focusMin * 60);
-    // Для сравнения: в настройках — стандартные 25 минут.
     const settings = await (await request.get("/api/v1/settings")).json();
     expect(settings.focus_duration_seconds).toBe(1500);
   });
@@ -133,24 +119,20 @@ test.describe("опоздание", () => {
     const slots = committed(groups);
     const firstOpen = slots.find((s) => !s.done);
     expect(firstOpen, "есть несделанный слот").toBeDefined();
-    // Утро укладывается заново с 08:40 (допуск в минуту: часы сервера идут сами).
     expect(firstOpen!.start).toBeGreaterThanOrEqual(toMinutes("08:40"));
     expect(firstOpen!.start).toBeLessThanOrEqual(toMinutes("08:41"));
     expect(slots.every((s) => (s.start as number) >= toMinutes("08:40"))).toBe(true);
     await expect(page.getByTestId("next-start")).toContainText("по плану в 08:4");
 
-    // Группа 08:00–10:00 никогда не заходит за 10:00.
     const morning = groups.find((g) => g.periodStart === toMinutes("08:00") && g.windowId === "");
     expect(morning, "группа 08:00–10:00 осталась").toBeDefined();
     expect(morning!.slots.length).toBeGreaterThan(0);
     for (const s of morning!.slots) expect(s.end as number).toBeLessThanOrEqual(toMinutes("10:00"));
 
-    // Окно «Работа» стартует ровно в 10:00 и хранит свою долю.
     const firstWindow = windowGroups(groups)[0];
     expect(firstWindow.periodStart).toBe(toMinutes("10:00"));
     expect(firstWindow.slots[0].start).toBe(toMinutes("10:00"));
     expect(firstWindow.slots.filter(isWork).length).toBeGreaterThan(0);
-    // Утренних слотов до 08:40 в плане нет вовсе: группа 06:00–06:40 исчезла.
     expect(groups.some((g) => g.periodEnd === toMinutes("06:40"))).toBe(false);
 
     expectPlanValid(groups, { noAdjacentOthers: true });
@@ -160,12 +142,11 @@ test.describe("опоздание", () => {
 });
 
 test.describe("опоздание: границы периодов", () => {
-  // Первый слот, который ещё можно сделать, и группа, в которой он окажется (утро, окно, второе окно, вечер).
   const cases: Array<{ now: string; first: string; group: [string, string]; window: boolean }> = [
-    { now: "09:50", first: "10:00", group: ["10:00", "14:00"], window: true }, // в утре осталось 10 минут — слот не влезает
-    { now: "13:50", first: "15:00", group: ["15:00", "19:00"], window: true }, // обед вырезан, окно после обеда
-    { now: "14:30", first: "15:00", group: ["15:00", "19:00"], window: true }, // посреди обеда
-    { now: "19:40", first: "19:40", group: ["19:00", "20:00"], window: false }, // остаток вечера: один сжатый помидор
+    { now: "09:50", first: "10:00", group: ["10:00", "14:00"], window: true },
+    { now: "13:50", first: "15:00", group: ["15:00", "19:00"], window: true },
+    { now: "14:30", first: "15:00", group: ["15:00", "19:00"], window: true },
+    { now: "19:40", first: "19:40", group: ["19:00", "20:00"], window: false },
   ];
   for (const c of cases) {
     test(`в ${c.now} ближайший помидор — в ${c.first}, всё остальное не пересекает границы`, async ({ page, request }) => {
@@ -214,7 +195,6 @@ test.describe("опоздание: границы периодов", () => {
     expect(open[0].idx).toBe(2);
     expect(open[0].start).toBeGreaterThanOrEqual(toMinutes("09:00"));
     expect(open[0].start).toBeLessThanOrEqual(toMinutes("09:01"));
-    // Сделанные слоты хранят фактический старт: оба в утреннем периоде 06:00–06:40, до 09:00.
     for (const s of slots.filter((x) => x.done)) expect(s.start as number).toBeLessThan(toMinutes("07:00"));
     expect(windowGroups(groups)[0].slots[0].start).toBe(toMinutes("10:00"));
     expectPlanValid(groups, { noAdjacentOthers: true });
@@ -244,11 +224,9 @@ test.describe("идущий помидор", () => {
     await expect(page.getByTestId("now-title")).toHaveText(slot0.task);
     await expect(slotAt(page, 0)).toHaveAttribute("data-active", "true");
     await expect(page.locator('[data-testid="plan-slot"][data-active="true"]')).toHaveCount(1);
-    // Идущий помидор нельзя перетащить на другую длительность.
     await expect(slotAt(page, 0).getByTestId("slot-focus")).toBeDisabled();
     await expect(slotAt(page, 1).getByTestId("slot-focus")).toBeEnabled();
 
-    // 5 минут фокуса, пауза, сервер уезжает на 10 минут.
     await advance(request, 300);
     await ui.btnPause.click();
     await expect(page.getByTestId("btn-pause")).toHaveAttribute("data-paused", "true");
@@ -260,7 +238,6 @@ test.describe("идущий помидор", () => {
     expect(left, "пауза не съела фокус").toBeGreaterThan(focusMin * 60 - 300 - 30);
     expect(left).toBeLessThanOrEqual(focusMin * 60 - 300);
 
-    // Следующий слот уехал примерно на длину паузы (10 минут).
     await reloadPlan(page);
     const after = await readPlan(page);
     const moved = committed(after).find((s) => s.idx === 1);
@@ -289,19 +266,16 @@ test.describe("идущий помидор", () => {
     await advance(request, focusMin * 60 + 2);
     await expect(ui.btnFocus).toBeVisible();
 
-    // Дальше — короткий перерыв длиной из слота, а не 5:00 из настроек.
     await expect(page.getByTestId("phase-title")).toContainText("Дальше короткий перерыв");
     await expect(ui.digits).toHaveText(mm(breakMin));
     await expect(page.getByTestId("day-counter")).toHaveAttribute("data-completed", "1");
     await expect(page.getByTestId("day-counter")).toContainText("Сегодня: 1 из");
     await expect(page.locator('[data-testid="day-dot"][data-state="done"]')).toHaveCount(1);
 
-    // Слот #0 выполнен, показывает фактический старт; слот #1 — следующий.
     await reloadPlan(page);
     const done = slotAt(page, 0);
     await expect(done).toHaveAttribute("data-done", "true");
     await expect(done).toHaveAttribute("data-active", "false");
-    // Фактический старт — в минуту запуска (допуск: между reset и кликом часы сервера идут сами).
     await expect(done).toHaveAttribute("data-start", /^48[01]$/);
     await expect(done.getByTestId("slot-start")).toHaveText(/^08:0[01]$/);
     await expect(done.getByTestId("slot-task")).toBeDisabled();
@@ -310,7 +284,6 @@ test.describe("идущий помидор", () => {
     await expect(slotAt(page, 1)).toHaveAttribute("data-done", "false");
     await expect(ui.digits).toHaveText(mm(breakMin));
 
-    // Перерыв стартует с длиной слота.
     await ui.startBreak();
     await expect(page.getByTestId("phase-title")).toHaveAttribute("data-phase", "short_break");
     const left = await ui.seconds();
@@ -350,7 +323,7 @@ test.describe("идущий помидор", () => {
     await advance(request, 300);
     await ui.btnPause.click();
     await expect(page.getByTestId("btn-pause")).toHaveAttribute("data-paused", "true");
-    await advance(request, 3600); // 09:05, помидор ещё на паузе
+    await advance(request, 3600);
     await ui.btnPause.click();
     await expect(page.getByTestId("btn-pause")).toHaveAttribute("data-paused", "false");
     await reloadPlan(page);
@@ -358,13 +331,11 @@ test.describe("идущий помидор", () => {
     const groups = await readPlan(page);
     const slots = committed(groups);
     expect(slots[0].active).toBe(true);
-    // Идущий помидор не потерял длину, окно по-прежнему начинается ровно в 10:00.
     await expect(ui.digits).toHaveText(/^\d\d:\d\d$/);
     expect(await ui.seconds()).toBeLessThanOrEqual(focusMin * 60 - 300);
     expect(windowGroups(groups)[0].slots[0].start).toBe(toMinutes("10:00"));
     const morning = groups.find((g) => g.periodStart === toMinutes("08:00") && g.windowId === "")!;
     for (const s of morning.slots) expect(s.end as number).toBeLessThanOrEqual(toMinutes("10:00"));
-    // В утреннем периоде их стало меньше, чем было (2 вместо 4), остальные продолжились в окне.
     expect(morning.slots.length).toBeLessThan(4);
     expectPlanValid(groups, { noAdjacentOthers: true });
   });
@@ -383,7 +354,6 @@ test.describe("после конца активного дня", () => {
     expect(over.slots.every((s) => s.overflow && s.start === null && s.end === null)).toBe(true);
     expect(over.slots.every((s) => s.startText === "")).toBe(true);
 
-    // Остаётся вся работа дня: гибкие задачи фикстуры; окно «Работа» уже закрыто.
     expect(new Set(over.slots.map((s) => s.task))).toEqual(
       new Set(["Поиск работы", "Работа с ИИ и другое", "Английский", "Слепая печать"]),
     );
@@ -396,7 +366,6 @@ test.describe("правка слотов", () => {
   test("задача слота: выбор в дереве сохраняется после перезагрузки", async ({ page, request }, info) => {
     await boot(request, page);
     const before = await readPlan(page);
-    // Первый слот утреннего периода 08:00–10:00 — ещё не начатый, свободный.
     const target = committed(before).find((s) => s.start === toMinutes("08:00"))!;
     expect(target, "слот 08:00").toBeDefined();
     expect(target.task).not.toBe("Английский");
@@ -412,7 +381,6 @@ test.describe("правка слотов", () => {
     await expect(slotAt(page, target.idx).getByTestId("slot-task")).toContainText("Английский");
     const groups = await readPlan(page);
     expectPlanValid(groups, { noAdjacentOthers: true });
-    // Закреплённый слот остался на своём месте.
     expect(committed(groups).find((s) => s.idx === target.idx)!.start).toBe(target.start);
   });
 
@@ -428,7 +396,6 @@ test.describe("правка слотов", () => {
     await reloadPlan(page);
     await expect(task).toContainText("Разбор почты");
 
-    // «Очистить слот» снимает ручную привязку: слот снова отдан автоматике и получает задачу плана.
     await task.click();
     await page.getByTestId("picker-clear").click();
     await expect(task).not.toContainText("Разбор почты");
@@ -459,11 +426,8 @@ test.describe("правка слотов", () => {
     expect(custom.end! - custom.start!, "конец слота = старт + 20 минут").toBe(20);
     expect(committed(groups).length, "никто не пропал из плана").toBeGreaterThanOrEqual(committed(before).length - 1);
     expectPlanValid(groups, { noAdjacentOthers: true });
-    // Циферблат тоже знает: если это следующий слот, он покажет новую длину — здесь слот не первый, так что
-    // проверяем первый и убеждаемся, что он не затронут.
     await expect(page.getByTestId("timer-digits")).toHaveText(mm(Number(committed(groups)[0].focus)));
 
-    // Пустое поле — снова значение плана.
     await slotAt(page, target.idx).getByTestId("slot-focus").fill("");
     await expect(slotAt(page, target.idx).getByTestId("slot-focus")).toHaveValue(String(auto));
     await reloadPlan(page);
@@ -480,7 +444,6 @@ test.describe("правка слотов", () => {
     await expect(slotAt(page, target.idx).getByTestId("slot-focus")).toHaveValue("90");
     await reloadPlan(page);
     const groups = await readPlan(page);
-    // Что бы ни решил планировщик, граница периода 10:00 нерушима.
     expectPlanValid(groups, { noAdjacentOthers: true });
     const morning = groups.find((g) => g.periodStart === toMinutes("08:00") && g.windowId === "")!;
     for (const s of morning.slots) expect(s.end as number).toBeLessThanOrEqual(toMinutes("10:00"));
@@ -495,7 +458,6 @@ test.describe("правка слотов", () => {
     await waitForPlan(page);
     const after = await readPlan(page);
     expectPlanValid(after, { noAdjacentOthers: true });
-    // Состояние дня не менялось — раскладка та же.
     expect(after.map((g) => [g.kind, g.periodStart, g.periodEnd, g.slots.length])).toEqual(
       before.map((g) => [g.kind, g.periodStart, g.periodEnd, g.slots.length]),
     );
@@ -512,9 +474,7 @@ test.describe("правка слотов", () => {
     expect(firstOpen.start).toBeGreaterThanOrEqual(toMinutes("09:30"));
     expect(firstOpen.start).toBeLessThanOrEqual(toMinutes("09:31"));
     expectPlanValid(groups, { noAdjacentOthers: true });
-    // Окно по-прежнему начинается в 10:00.
     expect(windowGroups(groups)[0].slots[0].start).toBe(toMinutes("10:00"));
-    // Сброс часов не нужен: reset следующего теста вернёт сегодняшнее время.
     await reset(request, { now: "05:50" });
   });
 });
@@ -538,7 +498,6 @@ test.describe("правка перерыва и «не влезших»", () => 
     expect(moved.start! - next.start!, "следующий помидор сдвинулся на разницу в перерыве").toBe(12 - oldBreak);
     expectPlanValid(groups, { noAdjacentOthers: true });
 
-    // Пустое поле — перерыв из плана.
     await slotAt(page, target.idx).getByTestId("slot-break").fill("");
     await expect(slotAt(page, target.idx).getByTestId("slot-break")).toHaveValue(String(oldBreak));
   });
@@ -560,11 +519,9 @@ test.describe("правка перерыва и «не влезших»", () => 
     await expect(ui.digits).toHaveText("09:00");
     await ui.startBreak();
     expect((await getState(request)).planned_seconds).toBe(9 * 60);
-    // Предпоследний выполненный слот перерыв уже не меняет.
     await expect(field).toBeDisabled();
   });
 
-  // Строки «Не влезли в день» полупрозрачные (свой контекст наложения): пикер обязан быть поверх соседей.
   test("пикер задач слота из «Не влезли в день» не перекрыт соседними строками", async ({ page, request }, info) => {
     await boot(request, page, { now: "20:30" });
     const first = (await readPlan(page))[0].slots[0];
@@ -574,7 +531,6 @@ test.describe("правка перерыва и «не влезших»", () => 
 
     const node = page.getByTestId("picker-node").filter({ hasText: "Слепая печать" }).first();
     await node.scrollIntoViewIfNeeded();
-    // Что реально лежит под центром пункта списка: сам пункт или чужое поле ввода?
     const topmost = await node.evaluate((el) => {
       const r = el.getBoundingClientRect();
       const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
@@ -595,8 +551,6 @@ test.describe("правка перерыва и «не влезших»", () => 
   });
 });
 
-// Свип без браузера: инварианты плана для сетки «время × длина фокуса × блоки × доля окна» и для разных границ дня.
-// Работает по /api/v1/rpc/day-plan, поэтому достаточно одного проекта.
 interface ApiSlot {
   idx: number;
   start_minutes: number | null;

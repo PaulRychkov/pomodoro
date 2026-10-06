@@ -2,9 +2,6 @@ import { expect, test } from "@playwright/test";
 import { advance, getState } from "./helpers";
 import { boot, committed, expectNoHorizontalScroll, expectPlanValid, readPlan, reloadPlan, slotAt } from "./plan-helpers";
 
-// Помидоры привязаны к слотам плана: сессия наследует задачу слота («Поиск работы» для утреннего периода),
-// а длительность фокуса — его минуты (22), не стандартные 25.
-
 test.describe("список «Помидоры сегодня»", () => {
   test("сессию можно перепривязать к своей метке прямо из списка", async ({ page, request }, info) => {
     const ui = await boot(request, page, { now: "08:00" });
@@ -16,14 +13,12 @@ test.describe("список «Помидоры сегодня»", () => {
 
     await expect(ui.sessionRows).toHaveCount(1);
     const row = ui.sessionRows.first();
-    // Сессия унаследовала задачу слота и полный зачёт.
     await expect(row.getByTestId("session-title")).toHaveText(slot0.task);
     await expect(ui.creditBadge(row)).toHaveText("1");
     await expect(row.getByTestId("session-credit")).toHaveAttribute("data-twelfths", "12");
     await expect(row.getByTestId("session-time")).toHaveText("08:00");
     await expect(row.getByTestId("session-duration")).toHaveText(`${slot0.focus}:00`);
 
-    // Перепривязка: карандаш → панель → своя метка (Enter).
     await expect(page.getByTestId("session-relabel-panel")).toHaveCount(0);
     await row.getByTestId("session-relabel").click();
     const panel = row.getByTestId("session-relabel-panel");
@@ -35,11 +30,9 @@ test.describe("список «Помидоры сегодня»", () => {
     await expect(page.getByTestId("session-relabel-panel")).toHaveCount(0);
     await expect(row.getByTestId("session-title")).toHaveText("Разбор почты");
     await expect(page.getByTestId("sessions-error")).toHaveCount(0);
-    // Зачёт и время при перепривязке не меняются.
     await expect(row.getByTestId("session-credit")).toHaveAttribute("data-twelfths", "12");
     await expect(row.getByTestId("session-time")).toHaveText("08:00");
 
-    // Метка записана на сервере и переживает перезагрузку.
     const sessions = (await (await request.get("/api/v1/rpc/sessions-today")).json()) as Array<Record<string, unknown>>;
     const focus = sessions.filter((s) => s.kind === "focus");
     expect(focus).toHaveLength(1);
@@ -74,7 +67,6 @@ test.describe("список «Помидоры сегодня»", () => {
     const slotSeconds = Number(slot0.focus) * 60;
 
     await ui.startFocus();
-    // Ровно половина запланированного фокуса (по часам сервера): доля считается от слота, а не от 25 минут.
     await advance(request, slotSeconds / 2);
     await expect(ui.creditHint).toContainText("½");
     await expect(page.getByTestId("credit-hint")).toHaveAttribute("data-twelfths", "6");
@@ -87,7 +79,6 @@ test.describe("список «Помидоры сегодня»", () => {
     await expect(row.getByTestId("session-credit")).toHaveAttribute("data-twelfths", "6");
     await expect(row).toHaveAttribute("data-outcome", "completed");
 
-    // Счётчик дня: помидор выполнен, засчитано полпомидора.
     await expect(ui.dayCounter).toHaveAttribute("data-completed", "1");
     await expect(ui.dayCounter).toContainText("Сегодня: 1 из");
     await expect(ui.dayCounter).toContainText(/засчитано 0[,.]5/);
@@ -96,7 +87,6 @@ test.describe("список «Помидоры сегодня»", () => {
     expect(st.completed_today).toBe(1);
     expect(st.credit_today).toBe(0.5);
 
-    // В плане слот выполнен, следующий — на очереди.
     await reloadPlan(page);
     await expect(slotAt(page, 0)).toHaveAttribute("data-done", "true");
     await expect(slotAt(page, 1)).toHaveAttribute("data-active", "true");
@@ -109,7 +99,6 @@ test.describe("список «Помидоры сегодня»", () => {
     const slotMin = Number(committed(await readPlan(page))[0].focus);
     await ui.startFocus();
     await advance(request, 13 * 60);
-    // 13 из 22 минут ≈ 0,59 → ближайший шаг шкалы ⅔ (⅓, ½, ⅔, ¾, 1).
     const expectedTwelfths = [0, 3, 4, 6, 8, 9, 12].reduce((best, step) =>
       Math.abs(780 * 12 - step * slotMin * 60) <= Math.abs(780 * 12 - best * slotMin * 60) ? step : best,
     );
@@ -120,7 +109,6 @@ test.describe("список «Помидоры сегодня»", () => {
       "data-twelfths",
       String(expectedTwelfths),
     );
-    // Дробный зачёт не превращает помидор в «невыполненный»: счётчик дня вырос.
     await expect(ui.dayCounter).toHaveAttribute("data-completed", "1");
   });
 
@@ -136,7 +124,6 @@ test.describe("список «Помидоры сегодня»", () => {
     await expect(ui.dayCounter).toHaveAttribute("data-completed", "0");
     await expect(slotAt(page, 0)).toHaveAttribute("data-done", "false");
     await expect(slotAt(page, 0)).toHaveAttribute("data-active", "true");
-    // Следующий старт по плану — снова первый слот, с его длиной.
     const first = committed(await readPlan(page))[0];
     await expect(ui.digits).toHaveText(`${first.focus}:00`);
   });

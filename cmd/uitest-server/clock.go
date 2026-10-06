@@ -6,8 +6,6 @@ import (
 	"time"
 )
 
-// fakeClock идёт в реальном времени, но со сдвигом: так таймеры тикают сами,
-// а тест может перепрыгнуть вперёд (advance) или поставить любой момент (set).
 type fakeClock struct {
 	mu     sync.Mutex
 	offset time.Duration
@@ -43,8 +41,6 @@ func (c *fakeClock) restore(offset time.Duration) {
 	c.offset = offset
 }
 
-// parseMoment понимает RFC3339, локальные «2026-10-05T05:50[:00]» (пробел вместо T
-// тоже можно) и просто «05:50» — это время сегодняшнего (реального) дня в tz сервера.
 func parseMoment(s string, loc *time.Location) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
 		return t.In(loc), nil

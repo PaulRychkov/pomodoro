@@ -4,8 +4,8 @@ import { api, isDesktop, playChime } from "../api";
 import { fmtClock, parseClock } from "../time";
 import type { Preset, ScheduleEntry, Settings } from "../types";
 
-const DEFAULT_DAY_START = 360; // 06:00
-const DEFAULT_DAY_END = 1200; // 20:00
+const DEFAULT_DAY_START = 360;
+const DEFAULT_DAY_END = 1200;
 const MIN_DAY_MINUTES = 30;
 
 const WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -210,8 +210,6 @@ function TimeInput({
   testid: string;
   invalid?: boolean;
 }) {
-  // <input type="time"> не умеет «24:00», а при наборе временно отдаёт пустую строку,
-  // поэтому держим локальный текст и отдаём наружу только полные значения.
   const shown = fmtClock(Math.min(value, 1439));
   const [text, setText] = useState(shown);
 

@@ -93,7 +93,6 @@ func Start(dataDir, tasksURL, syncURL, syncToken string) string {
 			log.Warn("обновление плана дня", zap.Error(err))
 		}
 	}
-	// уведомитель работает под мьютексом движка: план трогаем только в горутине
 	eng.SetNotifier(func(st engine.State, reason string) {
 		switch reason {
 		case "completed":

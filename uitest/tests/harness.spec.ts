@@ -11,8 +11,6 @@ import {
   type TasksLogEntry,
 } from "./helpers";
 
-// Проверка самого стенда: управляющее API и фейковый task-planner. Браузер не нужен,
-// поэтому прогоняем один раз — на десктопном проекте.
 test.skip(({ isMobile }) => isMobile, "API-тесты стенда не зависят от вьюпорта");
 
 const TASKS = "/__tasks/api/v1";
@@ -154,7 +152,6 @@ test.describe("фейковый task-planner", () => {
     expect(titles).toContain("Работа");
     expect(titles).toContain("Поиск работы");
     expect(slots.some((s) => s.window_title === "Работа")).toBe(true);
-    // События без помидоров («Зал», «Обед») слотов не получают.
     expect(titles).not.toContain("Зал");
     expect(titles).not.toContain("Обед");
 
@@ -165,7 +162,6 @@ test.describe("фейковый task-planner", () => {
 
   test("клиент прошлого стека после reset получает 410", async ({ request }) => {
     await reset(request);
-    // Поколение 0 не существует: так выглядит клиент, созданный до последнего reset.
     const res = await request.post(`/__tasks/g0/api/v1/occurrences/occ_2026-10-05_typing/complete`, { data: {} });
     expect(res.status()).toBe(410);
     expect(await tasksLog(request)).toHaveLength(0);
@@ -191,7 +187,6 @@ test.describe("фейковый task-planner", () => {
     expect(started.ok()).toBe(true);
     await advance(request, 1501);
 
-    // HandleFocusCompleted работает в фоновой горутине — ждём запись в журнале.
     await expect
       .poll(async () => (await tasksLog(request)).map((e: TasksLogEntry) => e.kind), { timeout: 10_000 })
       .toContain("progress");
