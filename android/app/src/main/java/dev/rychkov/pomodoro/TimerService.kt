@@ -1,5 +1,6 @@
 package dev.rychkov.pomodoro
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,9 +9,11 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.media.Ringtone
 import android.media.RingtoneManager
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import mobile.Mobile
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -23,6 +26,10 @@ class TimerService : Service() {
     private var worker: Thread? = null
     private var prevPhase: String? = null
     private var prevRemaining: Int = 0
+    private var prevPaused = false
+    private var prevTickAt = 0L
+    private var wakeAt = 0L
+    private var ringtone: Ringtone? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -79,12 +86,21 @@ class TimerService : Service() {
         val done = json.optInt("completed_today", 0)
         val total = json.optInt("day_total", 0)
 
-        val wasRunning = prevPhase != null && prevPhase != "idle"
-        if (wasRunning && phase != prevPhase && prevRemaining <= 2) {
+        val now = SystemClock.elapsedRealtime()
+        val wasRunning = prevPhase != null && prevPhase != "idle" && !prevPaused
+        val secondsSincePrevTick = (now - prevTickAt) / 1000
+        if (wasRunning && phase != prevPhase && secondsSincePrevTick + 2 >= prevRemaining) {
             notifyFinished(prevPhase!!)
         }
         prevPhase = phase
         prevRemaining = remaining
+        prevPaused = paused
+        prevTickAt = now
+        if (phase != "idle" && !paused && remaining > 0) {
+            scheduleWake(now + remaining * 1000L)
+        } else {
+            cancelWake()
+        }
 
         val title = when {
             phase == "focus" && paused -> "Фокус на паузе"
@@ -164,10 +180,36 @@ class TimerService : Service() {
             } else {
                 RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
             }
-            RingtoneManager.getRingtone(applicationContext, uri)?.play()
+            ringtone?.stop()
+            ringtone = RingtoneManager.getRingtone(applicationContext, uri)
+            ringtone?.play()
         } catch (_: Exception) {
         }
     }
+
+    private fun scheduleWake(at: Long) {
+        if (kotlin.math.abs(at - wakeAt) < WAKE_TOLERANCE_MS) return
+        val alarms = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarms.canScheduleExactAlarms()) {
+            alarms.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, wakeIntent())
+        } else {
+            alarms.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, wakeIntent())
+        }
+        wakeAt = at
+    }
+
+    private fun cancelWake() {
+        if (wakeAt == 0L) return
+        (getSystemService(Context.ALARM_SERVICE) as AlarmManager).cancel(wakeIntent())
+        wakeAt = 0L
+    }
+
+    private fun wakeIntent(): PendingIntent = PendingIntent.getBroadcast(
+        this,
+        0,
+        Intent(this, TimerAlarmReceiver::class.java),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
 
     private fun createChannels() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -197,6 +239,7 @@ class TimerService : Service() {
         private const val CHANNEL_ALERT = "pomodoro_alert"
         private const val NOTIF_ID = 1
         private const val NOTIF_ALERT_ID = 2
+        private const val WAKE_TOLERANCE_MS = 2000L
         private const val STATE_URL = "http://127.0.0.1:18082/api/v1/state"
 
         fun start(ctx: Context) {
